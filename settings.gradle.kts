@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AutoEQ"
+rootProject.name = "autoEQ"
 include(":app")
