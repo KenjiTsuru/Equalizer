@@ -1,48 +1,162 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/equalizer_fragment"
+    android:id="@+id/eq_drawer"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
-    <LinearLayout
+    android:layout_height="match_parent">
+
+    <!-- Main content -->
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <com.google.android.material.appbar.AppBarLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <com.google.android.material.appbar.MaterialToolbar
+                android:id="@+id/eq_toolbar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="Equalizer" />
+        </com.google.android.material.appbar.AppBarLayout>
+
+        <!-- Equalizer UI -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/equalizer_fragment"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="16dp"
+            app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+            <!-- dB labels -->
+            <LinearLayout
+                android:id="@+id/eq_labels"
+                android:layout_width="wrap_content"
+                android:layout_height="0dp"
+                android:orientation="vertical"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+12 dB"
+                    android:textStyle="bold"/>
+
+                <Space
+                    android:layout_width="wrap_content"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 dB"
+                    android:textStyle="bold"/>
+
+                <Space
+                    android:layout_width="wrap_content"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="-12 dB"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <!-- Graph area -->
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/eq_graph"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginStart="12dp"
+                app:layout_constraintStart_toEndOf="@id/eq_labels"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent">
+
+                <!-- 0 dB center line -->
+                <androidx.constraintlayout.widget.Guideline
+                    android:id="@+id/eq_zero_guideline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    app:layout_constraintGuide_percent="0.5"/>
+
+                <View
+                    android:id="@+id/eq_zero_line"
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:alpha="0.7"
+                    android:background="?attr/colorOutline"
+                    app:layout_constraintTop_toTopOf="@id/eq_zero_guideline"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"/>
+
+                <!-- Bars -->
+                <LinearLayout
+                    android:id="@+id/eq_bands_row"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:paddingHorizontal="8dp"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent">
+
+                    <!-- Replace rotated SeekBars with a real vertical seekbar view -->
+                    <com.example.autoeq.VerticalSeekBar
+                        android:id="@+id/seekBar1"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:minWidth="48dp"
+                        android:splitTrack="false" />
+
+                    <com.example.autoeq.VerticalSeekBar
+                        android:id="@+id/seekBar2"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:minWidth="48dp"
+                        android:splitTrack="false" />
+
+                    <com.example.autoeq.VerticalSeekBar
+                        android:id="@+id/seekBar3"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:minWidth="48dp"
+                        android:splitTrack="false" />
+
+                    <com.example.autoeq.VerticalSeekBar
+                        android:id="@+id/seekBar4"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:minWidth="48dp"
+                        android:splitTrack="false" />
+                </LinearLayout>
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+
+    <!-- Drawer menu -->
+    <com.google.android.material.navigation.NavigationView
+        android:id="@+id/eq_nav_view"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:orientation="horizontal"
-        android:layout_weight="1"
-        android:layout_gravity="center">
+        android:layout_gravity="start"
+        app:menu="@menu/equalizer_drawer_menu" />
 
-        <SeekBar
-            android:id="@+id/seekBar1"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:rotation="270" />
-
-        <SeekBar
-            android:id="@+id/seekBar2"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:rotation="270" />
-        <SeekBar
-            android:id="@+id/seekBar3"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:rotation="270" />
-        <SeekBar
-            android:id="@+id/seekBar4"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:rotation="270" />
-
-    </LinearLayout>
-
-</LinearLayout>
+</androidx.drawerlayout.widget.DrawerLayout>
