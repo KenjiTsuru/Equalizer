@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="0dp">
+
+    <com.example.autoeq.VerticalSeekBar
+        android:id="@+id/eq_band_seekbar"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:splitTrack="false"
+        android:thumbOffset="0dp"
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp" />
+
+    <TextView
+        android:id="@+id/eq_band_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:text="1 kHz" />
+
+</LinearLayout>

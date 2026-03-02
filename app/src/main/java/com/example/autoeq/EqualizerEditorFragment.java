@@ -123,6 +123,7 @@ public class EqualizerEditorFragment extends Fragment {
 
     }
 
+    // Helper function for pop up menu to name your equalizer
     private void showCreateEqualizerDialog() {
         EditText input = new EditText(requireContext());
         input.setHint("Equalizer genre");
@@ -168,21 +169,22 @@ public class EqualizerEditorFragment extends Fragment {
         for (short band = 0; band < numBands; band++) {
             final short finalBand = band;
 
-            View row = LayoutInflater.from(requireContext())
-                    .inflate(android.R.layout.simple_list_item_2, bandsContainer, false);
+            View bandView = LayoutInflater.from(requireContext())
+                    .inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
-            TextView title = row.findViewById(android.R.id.text1);
-            TextView subtitle = row.findViewById(android.R.id.text2);
+            TextView label = bandView.findViewById(R.id.eq_band_label);
+            VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
 
-            int centerFreqmHz = systemEq.getCenterFreq(finalBand); // milliHertz
+            int centerFreqmHz = systemEq.getCenterFreq(finalBand);
             float centerHz = centerFreqmHz / 1000f;
 
-            title.setText("Band " + finalBand);
-            subtitle.setText(String.format(java.util.Locale.US, "%.0f Hz", centerHz));
+            if (centerHz >= 1000) {
+                label.setText(String.format(java.util.Locale.US, "%.1f kHz", centerHz / 1000f));
+            } else {
+                label.setText(String.format(java.util.Locale.US, "%.0f Hz", centerHz));
+            }
 
-            SeekBar sb = new SeekBar(requireContext());
             sb.setMax(span);
-
             short currentMb = systemEq.getBandLevel(finalBand);
             sb.setProgress(currentMb - minMb);
 
@@ -197,15 +199,7 @@ public class EqualizerEditorFragment extends Fragment {
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {}
             });
 
-            LinearLayout wrapper = new LinearLayout(requireContext());
-            wrapper.setOrientation(LinearLayout.VERTICAL);
-            int padding = getResources().getDimensionPixelSize(R.dimen.band_vertical_padding);
-            wrapper.setPadding(0, padding, 0, padding);
-
-            wrapper.addView(row);
-            wrapper.addView(sb);
-
-            bandsContainer.addView(wrapper);
+            bandsContainer.addView(bandView);
         }
     }
 
@@ -228,10 +222,12 @@ public class EqualizerEditorFragment extends Fragment {
         for (short band = 0; band < deviceBands; band++) {
             int deviceFreq = systemEq.getCenterFreq(band);
 
+            // nearest-frequency match (simple + effective)
             short targetLevel = nearestLevelForFreq(preset, deviceFreq);
             systemEq.setBandLevel(band, targetLevel);
         }
 
+        // refresh UI slider positions
         buildBandUiFromSystemEqualizer();
     }
 
