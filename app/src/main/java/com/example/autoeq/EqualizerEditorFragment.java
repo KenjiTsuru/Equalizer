@@ -172,21 +172,22 @@ public class EqualizerEditorFragment extends Fragment {
             View bandView = LayoutInflater.from(requireContext())
                     .inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
-            TextView label = bandView.findViewById(R.id.eq_band_label);
+            // TextView label = bandView.findViewById(R.id.eq_band_label);
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
 
             int centerFreqmHz = systemEq.getCenterFreq(finalBand);
             float centerHz = centerFreqmHz / 1000f;
+            int test = span/2;
 
-            if (centerHz >= 1000) {
-                label.setText(String.format(java.util.Locale.US, "%.1f kHz", centerHz / 1000f));
-            } else {
-                label.setText(String.format(java.util.Locale.US, "%.0f Hz", centerHz));
-            }
+//            if (centerHz >= 1000) {
+//                label.setText(String.format(java.util.Locale.US, "%.1f kHz", centerHz / 1000f));
+//            } else {
+//                label.setText(String.format(java.util.Locale.US, "%.0f Hz", centerHz));
+//            }
 
             sb.setMax(span);
             short currentMb = systemEq.getBandLevel(finalBand);
-            sb.setProgress(currentMb - minMb);
+            sb.setProgress(test);
 
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
