@@ -21,18 +21,21 @@ import android.widget.TextView;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
 
+import java.util.ArrayList;
+import java.util.Map;
+
 /**
  * A simple {@link Fragment} subclass.
  * Use the {@link EqualizerEditorFragment#newInstance} factory method to
  * create an instance of this fragment.
  */
 public class EqualizerEditorFragment extends Fragment {
-    private static final int UI_MIN_DB = -1200;
-    private static final int UI_MAX_DB = 1200;
 
     private Equalizer systemEq;
+    private NavigationView navView;
     private short minMb, maxMb;
     private LinearLayout bandsContainer;
+    ArrayList<GenreEqualizer> presets = new ArrayList<>();
 
     private int nextPresetMenuId = 1000;
     private final java.util.Map<Integer, GenreEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
@@ -86,7 +89,7 @@ public class EqualizerEditorFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         DrawerLayout drawerLayout = view.findViewById(R.id.eq_drawer);
         MaterialToolbar toolbar = view.findViewById(R.id.eq_toolbar);
-        NavigationView navView = view.findViewById(R.id.eq_nav_view);
+        navView = view.findViewById(R.id.eq_nav_view);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
 
@@ -94,18 +97,23 @@ public class EqualizerEditorFragment extends Fragment {
                 drawerLayout.openDrawer(GravityCompat.START)
         );
 
+        // Setup the new create button in the drawer header
+        View headerView = navView.getHeaderView(0);
+        View btnCreate = headerView.findViewById(R.id.btn_create_eq);
+        if (btnCreate != null) {
+            btnCreate.setOnClickListener(v -> {
+                drawerLayout.closeDrawer(GravityCompat.START);
+                showCreateEqualizerDialog();
+            });
+        }
+
         navView.setNavigationItemSelectedListener(item -> {
             int id = item.getItemId();
 
-            if (id == R.id.drawer_create_equalizer) {
+            if (presetsByMenuId.containsKey(id)) {
+                GenreEqualizer selectedEq = presetsByMenuId.get(id);
+                // implement applyPreset
                 drawerLayout.closeDrawer(GravityCompat.START);
-                showCreateEqualizerDialog();
-                return true;
-            }
-
-            if (id == R.id.drawer_manage_equalizers) {
-                drawerLayout.closeDrawer(GravityCompat.START);
-                Toast.makeText(requireContext(), "Manage equalizers (TODO)", Toast.LENGTH_SHORT).show();
                 return true;
             }
 
@@ -137,10 +145,40 @@ public class EqualizerEditorFragment extends Fragment {
                     String name = input.getText().toString().trim();
                     if (name.isEmpty()) name = "Untitled";
 
-                    // TODO: hook into real equalizer creation logic
+                    // TODO: hook into real equalizer editing logic
+                    GenreEqualizer eq = new GenreEqualizer(name, new int[12], new short[12]);
+                    presets.add(eq);
+                    presetsByMenuId.put(nextPresetMenuId, eq);
+                    nextPresetMenuId++;
+
+                    updateDrawerMenu(navView);
+
                     Toast.makeText(requireContext(), "Created: " + name, Toast.LENGTH_SHORT).show();
                 })
                 .show();
+    }
+
+    private void updateDrawerMenu(NavigationView navView) {
+        android.view.Menu menu = navView.getMenu();
+
+        for (int i = 1000; i < nextPresetMenuId; i++) {
+            menu.removeItem(i);
+        }
+
+        int groupId = 2;
+        for (int i = 0; i < presets.size(); i++) {
+            GenreEqualizer eq = presets.get(i);
+            int menuId = -1;
+            for (java.util.Map.Entry<Integer, GenreEqualizer> entry : presetsByMenuId.entrySet()) {
+                if (entry.getValue().equals(eq)) {
+                    menuId = entry.getKey();
+                    break;
+                }
+            }
+            if (menuId != -1) {
+                menu.add(groupId, menuId, android.view.Menu.NONE, eq.getGenreName()).setIcon(android.R.drawable.ic_media_next);
+            }
+        }
     }
 
     private void initSystemEqualizer(int audioSessionId) {
@@ -203,53 +241,6 @@ public class EqualizerEditorFragment extends Fragment {
             bandsContainer.addView(bandView);
         }
     }
-
-    private GenreEqualizer snapshotCurrentPreset(String name) {
-        short numBands = systemEq.getNumberOfBands();
-        int[] freqs = new int[numBands];
-        short[] levels = new short[numBands];
-
-        for (short band = 0; band < numBands; band++) {
-            freqs[band] = systemEq.getCenterFreq(band);
-            levels[band] = systemEq.getBandLevel(band);
-        }
-        return new GenreEqualizer(name, freqs, levels);
-    }
-
-    private void applyPresetToDevice(GenreEqualizer preset) {
-        if (systemEq == null) return;
-
-        short deviceBands = systemEq.getNumberOfBands();
-        for (short band = 0; band < deviceBands; band++) {
-            int deviceFreq = systemEq.getCenterFreq(band);
-
-            // nearest-frequency match (simple + effective)
-            short targetLevel = nearestLevelForFreq(preset, deviceFreq);
-            systemEq.setBandLevel(band, targetLevel);
-        }
-
-        // refresh UI slider positions
-        buildBandUiFromSystemEqualizer();
-    }
-
-
-    private short nearestLevelForFreq(GenreEqualizer preset, int deviceFreqmHz) {
-        int[] freqs = preset.getCenterFreqmHz();
-        short[] levels = preset.getLevelsMb();
-
-        int bestIdx = 0;
-        long bestDist = Long.MAX_VALUE;
-
-        for (int i = 0; i < freqs.length; i++) {
-            long d = Math.abs((long) freqs[i] - deviceFreqmHz);
-            if (d < bestDist) {
-                bestDist = d;
-                bestIdx = i;
-            }
-        }
-        return levels[bestIdx];
-    }
-
 
     @Override
     public void onDestroyView() {
