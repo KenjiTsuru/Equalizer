@@ -35,7 +35,7 @@ public class EqualizerEditorFragment extends Fragment {
     private NavigationView navView;
     private short minMb, maxMb;
     private LinearLayout bandsContainer;
-    ArrayList<GenreEqualizer> presets = new ArrayList<>();
+    private ArrayList<GenreEqualizer> presets = new ArrayList<>();
 
     private int nextPresetMenuId = 1000;
     private final java.util.Map<Integer, GenreEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
@@ -146,7 +146,7 @@ public class EqualizerEditorFragment extends Fragment {
                     if (name.isEmpty()) name = "Untitled";
 
                     // TODO: hook into real equalizer editing logic
-                    GenreEqualizer eq = new GenreEqualizer(name, new int[12], new short[12]);
+                    GenreEqualizer eq = new GenreEqualizer(name, new int[5], new short[5]);
                     presets.add(eq);
                     presetsByMenuId.put(nextPresetMenuId, eq);
                     nextPresetMenuId++;

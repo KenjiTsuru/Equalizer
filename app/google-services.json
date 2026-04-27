@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "444286464827",
+    "project_id": "equalizer-b237a",
+    "storage_bucket": "equalizer-b237a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:444286464827:android:0cfc9efdee4513dd01fd1e",
+        "android_client_info": {
+          "package_name": "com.example.autoeq"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAziHe59F_XfjigIqeZo2-1az9hBJqHxhU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
