@@ -13,17 +13,6 @@
         android:padding="24dp"
         android:gravity="center_horizontal">
 
-        <!-- Logo -->
-        <TextView
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:layout_marginTop="48dp"
-            android:gravity="center"
-            android:text="$"
-            android:textColor="#22C55E"
-            android:textSize="32sp"
-            android:textStyle="bold" />
-
         <!-- Title -->
         <TextView
             android:layout_width="wrap_content"
