@@ -22,100 +22,116 @@
                 app:title="Equalizer" />
         </com.google.android.material.appbar.AppBarLayout>
 
-        <!-- Equalizer UI -->
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:id="@+id/equalizer_fragment"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:padding="16dp"
             app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-            <!-- dB labels -->
-            <LinearLayout
-                android:id="@+id/eq_labels"
+            <!-- Empty State Message -->
+            <TextView
+                android:id="@+id/eq_empty_state_text"
                 android:layout_width="wrap_content"
-                android:layout_height="0dp"
-                android:orientation="vertical"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="Create an equalizer in the left hand corner to get started"
+                android:textAlignment="center"
+                android:padding="24dp"
+                android:textSize="18sp"
+                android:visibility="visible"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="+12 dB"
-                    android:textStyle="bold"/>
-
-                <Space
-                    android:layout_width="wrap_content"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 dB"
-                    android:textStyle="bold"/>
-
-                <Space
-                    android:layout_width="wrap_content"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"/>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="-12 dB"
-                    android:textStyle="bold"/>
-            </LinearLayout>
-
-            <!-- Graph area -->
+            <!-- Equalizer UI -->
             <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/eq_graph"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:layout_marginStart="12dp"
-                app:layout_constraintStart_toEndOf="@id/eq_labels"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintBottom_toBottomOf="parent">
+                android:id="@+id/equalizer_ui_container"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="16dp"
+                android:visibility="gone">
 
-                <!-- 0 dB center line -->
-                <androidx.constraintlayout.widget.Guideline
-                    android:id="@+id/eq_zero_guideline"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    app:layout_constraintGuide_percent="0.5"/>
-
-                <View
-                    android:id="@+id/eq_zero_line"
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:alpha="0.7"
-                    android:background="?attr/colorOutline"
-                    app:layout_constraintTop_toTopOf="@id/eq_zero_guideline"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent"/>
-
-                <!-- Bars -->
+                <!-- dB labels -->
                 <LinearLayout
-                    android:id="@+id/eq_bands_row"
-                    android:layout_width="0dp"
+                    android:id="@+id/eq_labels"
+                    android:layout_width="wrap_content"
                     android:layout_height="0dp"
-                    android:orientation="horizontal"
-                    android:paddingHorizontal="0dp"
+                    android:orientation="vertical"
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toEndOf="parent">
+                    app:layout_constraintStart_toStartOf="parent">
 
-                    <!-- Replace rotated SeekBars with a real vertical seekbar view -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="+12 dB"
+                        android:textStyle="bold"/>
+
+                    <Space
+                        android:layout_width="wrap_content"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 dB"
+                        android:textStyle="bold"/>
+
+                    <Space
+                        android:layout_width="wrap_content"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-12 dB"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
-            </androidx.constraintlayout.widget.ConstraintLayout>
+                <!-- Graph area -->
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:id="@+id/eq_graph"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_marginStart="12dp"
+                    app:layout_constraintStart_toEndOf="@id/eq_labels"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent">
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
+                    <!-- 0 dB center line -->
+                    <androidx.constraintlayout.widget.Guideline
+                        android:id="@+id/eq_zero_guideline"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        app:layout_constraintGuide_percent="0.5"/>
+
+                    <View
+                        android:id="@+id/eq_zero_line"
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:alpha="0.7"
+                        android:background="?attr/colorOutline"
+                        app:layout_constraintTop_toTopOf="@id/eq_zero_guideline"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent"/>
+
+                    <!-- Bars -->
+                    <LinearLayout
+                        android:id="@+id/eq_bands_row"
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="0dp"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent">
+                    </LinearLayout>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+        </FrameLayout>
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 

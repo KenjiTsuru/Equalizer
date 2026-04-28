@@ -11,8 +11,10 @@ import androidx.fragment.app.Fragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.SeekBar;
+import android.widget.Spinner;
 import android.widget.Toast;
 import android.media.audiofx.Equalizer;
 import android.widget.LinearLayout;
@@ -39,6 +41,9 @@ public class EqualizerEditorFragment extends Fragment {
 
     private int nextPresetMenuId = 1000;
     private final java.util.Map<Integer, GenreEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
+
+    private View emptyStateText;
+    private View eqUiContainer;
 
     // TODO: Rename parameter arguments, choose names that match
     // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
@@ -90,6 +95,8 @@ public class EqualizerEditorFragment extends Fragment {
         DrawerLayout drawerLayout = view.findViewById(R.id.eq_drawer);
         MaterialToolbar toolbar = view.findViewById(R.id.eq_toolbar);
         navView = view.findViewById(R.id.eq_nav_view);
+        emptyStateText = view.findViewById(R.id.eq_empty_state_text);
+        eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
 
@@ -125,33 +132,56 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer = view.findViewById(R.id.eq_bands_row);
 
         initSystemEqualizer(0);
-        if (systemEq != null) {
+        
+        // Only show UI if we already have presets
+        if (!presets.isEmpty()) {
+            showEqualizerUi();
+        }
+    }
+
+    private void showEqualizerUi() {
+        if (emptyStateText != null) emptyStateText.setVisibility(View.GONE);
+        if (eqUiContainer != null) eqUiContainer.setVisibility(View.VISIBLE);
+        if (systemEq != null && bandsContainer.getChildCount() == 0) {
             buildBandUiFromSystemEqualizer();
         }
-
     }
 
     // Helper function for pop up menu to name your equalizer
     private void showCreateEqualizerDialog() {
-        EditText input = new EditText(requireContext());
-        input.setHint("Equalizer genre");
+        LinearLayout layout = new LinearLayout(requireContext());
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(50, 40, 50, 10);
 
+        final EditText input = new EditText(requireContext());
+        input.setHint("Equalizer name");
+        layout.addView(input);
+
+        final Spinner typeSpinner = new Spinner(requireContext());
+        String[] types = {"Song", "Genre", "Artist"};
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_spinner_item, types);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        typeSpinner.setAdapter(adapter);
+        layout.addView(typeSpinner);
         new AlertDialog.Builder(requireContext())
                 .setTitle("Create your equalizer")
-                .setMessage("Type equalizer genre:")
-                .setView(input)
+                .setView(layout)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Create", (dialog, which) -> {
                     String name = input.getText().toString().trim();
                     if (name.isEmpty()) name = "Untitled";
 
-                    // TODO: hook into real equalizer editing logic
-                    GenreEqualizer eq = new GenreEqualizer(name, new int[5], new short[5]);
+                    short type = (short) typeSpinner.getSelectedItemPosition();
+
+                    // Using 5 bands as a placeholder or get from systemEq if available
+                    int numBands = (systemEq != null) ? systemEq.getNumberOfBands() : 5;
+                    GenreEqualizer eq = new GenreEqualizer(name, type, new int[numBands], new short[numBands]);
                     presets.add(eq);
                     presetsByMenuId.put(nextPresetMenuId, eq);
                     nextPresetMenuId++;
 
                     updateDrawerMenu(navView);
+                    showEqualizerUi();
 
                     Toast.makeText(requireContext(), "Created: " + name, Toast.LENGTH_SHORT).show();
                 })
@@ -210,22 +240,12 @@ public class EqualizerEditorFragment extends Fragment {
             View bandView = LayoutInflater.from(requireContext())
                     .inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
-            // TextView label = bandView.findViewById(R.id.eq_band_label);
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
-
-            int centerFreqmHz = systemEq.getCenterFreq(finalBand);
-            float centerHz = centerFreqmHz / 1000f;
-            int test = span/2;
-
-//            if (centerHz >= 1000) {
-//                label.setText(String.format(java.util.Locale.US, "%.1f kHz", centerHz / 1000f));
-//            } else {
-//                label.setText(String.format(java.util.Locale.US, "%.0f Hz", centerHz));
-//            }
 
             sb.setMax(span);
             short currentMb = systemEq.getBandLevel(finalBand);
-            sb.setProgress(test);
+            // Centering progress for visualization if needed, or use currentMb
+            sb.setProgress(currentMb - minMb);
 
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
