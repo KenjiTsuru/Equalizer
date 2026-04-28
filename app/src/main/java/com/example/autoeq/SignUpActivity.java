@@ -3,11 +3,8 @@ package com.example.autoeq;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.Spinner;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
@@ -15,10 +12,8 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.example.autoeq.FirebaseCRUD;
 import com.example.autoeq.validators.SignUpValidator;
 import com.example.autoeq.models.User;
-import com.example.autoeq.R;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -29,7 +24,6 @@ public class SignUpActivity extends AppCompatActivity {
 
     private TextInputLayout nameLayout, emailLayout, passwordLayout, confirmPasswordLayout;
     private TextInputEditText nameInput, emailInput, passwordInput, confirmPasswordInput;
-    private Spinner roleSpinner;
     private Button signUpButton;
     private TextView loginLink;
     private FirebaseAuth auth;
@@ -52,7 +46,6 @@ public class SignUpActivity extends AppCompatActivity {
         });
 
         initViews();
-        setupSpinner();
         setupListeners();
     }
 
@@ -67,32 +60,24 @@ public class SignUpActivity extends AppCompatActivity {
         passwordInput = findViewById(R.id.passwordInput);
         confirmPasswordInput = findViewById(R.id.confirmPasswordInput);
 
-        roleSpinner = findViewById(R.id.roleSpinner);
         signUpButton = findViewById(R.id.signUpButton);
         loginLink = findViewById(R.id.loginLink);
 
         statusMessage = findViewById(R.id.statusMessage);
     }
 
-    private void setupSpinner() {
-        String[] roles = {"Employee", "Employer"};
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, roles);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        roleSpinner.setAdapter(adapter);
-    }
-
     private void setupListeners() {
         signUpButton.setOnClickListener(v -> attemptSignUp());
 
         loginLink.setOnClickListener(v -> {
-            Intent intent = new Intent(SignUpActivity.this, LoginActivity.class);
-            startActivity(intent);
+            // Simply finish to go back to LoginActivity if it's on the back stack
+            finish();
         });
     }
 
-    private void navigateToDashboard(String userName) {
-        Intent intent = new Intent(SignUpActivity.this, HomeFragment.class);
-        intent.putExtra("USER_NAME", userName);
+    private void navigateToMain() {
+        Intent intent = new Intent(SignUpActivity.this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(intent);
         finish();
     }
@@ -108,7 +93,6 @@ public class SignUpActivity extends AppCompatActivity {
         String email = emailInput.getText().toString().trim();
         String password = passwordInput.getText().toString();
         String confirmPassword = confirmPasswordInput.getText().toString();
-        String role = roleSpinner.getSelectedItem().toString();
 
         boolean isValid = true;
 
@@ -133,11 +117,14 @@ public class SignUpActivity extends AppCompatActivity {
         }
 
         if (isValid) {
+            signUpButton.setEnabled(false);
             auth.createUserWithEmailAndPassword(email, password)
                     .addOnCompleteListener(task -> {
+                        signUpButton.setEnabled(true);
                         if (task.isSuccessful() && auth.getCurrentUser() != null) {
                             String userId = auth.getCurrentUser().getUid();
-                            User user = new User(name, email, role, "", "", "", "");
+                            // Using a simpler User constructor or updating fields accordingly
+                            User user = new User(name, email);
 
                             firebaseCRUD.addOrUpdateUser(userId, user)
                                     .addOnCompleteListener(dbTask -> {
@@ -146,7 +133,7 @@ public class SignUpActivity extends AppCompatActivity {
                                             statusMessage.setText("Account created successfully!");
                                             statusMessage.setVisibility(android.view.View.VISIBLE);
 
-                                            navigateToDashboard(name);
+                                            navigateToMain();
                                         } else {
                                             String error = "Database error: " + (dbTask.getException() != null ? dbTask.getException().getMessage() : "Unknown error");
                                             statusMessage.setTextColor(android.graphics.Color.RED);
@@ -161,7 +148,7 @@ public class SignUpActivity extends AppCompatActivity {
                             if (task.getException() instanceof FirebaseNetworkException) {
                                 error = "Network error. Please check your connection.";
                             } else {
-                                error = "Auth error: " + task.getException().getMessage();
+                                error = "Auth error: " + (task.getException() != null ? task.getException().getMessage() : "Unknown error");
                             }
                             statusMessage.setTextColor(android.graphics.Color.RED);
                             statusMessage.setText(error);

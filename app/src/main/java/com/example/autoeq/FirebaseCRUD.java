@@ -6,16 +6,17 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
-import java.util.List;
-
 public class FirebaseCRUD {
     private DatabaseReference mDatabase;
 
     public FirebaseCRUD() {
-        mDatabase = FirebaseDatabase.getInstance().getReference();
+        try {
+            // Updated to use the correct -default-rtdb URL from your google-services.json
+            mDatabase = FirebaseDatabase.getInstance("https://equalizer-b237a-default-rtdb.firebaseio.com/").getReference();
+        } catch (Exception e) {
+            mDatabase = FirebaseDatabase.getInstance().getReference();
+        }
     }
-
-    // --- User Profile CRUD ---
 
     public Task<Void> addOrUpdateUser(String userId, User user) {
         return mDatabase.child("users").child(userId).setValue(user);
@@ -28,5 +29,4 @@ public class FirebaseCRUD {
     public DatabaseReference getUserReference(String userId) {
         return mDatabase.child("users").child(userId);
     }
-
 }
