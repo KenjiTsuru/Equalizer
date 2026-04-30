@@ -1,24 +1,34 @@
 package com.example.autoeq;
 
 public class GenreEqualizer {
-    private String genreName;
-    private short type; // 0 for Song, 1 for Genre, 2 for Artist
+    private String name; // Can be Song Name or Genre Name
+    private String artist; // Artist name (used if type is Song and Artist)
+    private short type; // 0 for Song and Artist, 1 for Genre
     private int[] centerFreqmHz;
     private short[] levelsMb;
 
-    public GenreEqualizer(String genreName, short type, int[] centerFreqmHz, short[] levelsMb) {
-        this.genreName = genreName;
+    public GenreEqualizer(String name, String artist, short type, int[] centerFreqmHz, short[] levelsMb) {
+        this.name = name;
+        this.artist = artist;
         this.type = type;
         this.centerFreqmHz = centerFreqmHz;
         this.levelsMb = levelsMb;
     }
 
-    public String getGenreName() {
-        return genreName;
+    public String getName() {
+        return name;
     }
 
-    public void setGenreName(String genreName) {
-        this.genreName = genreName;
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getArtist() {
+        return artist;
+    }
+
+    public void setArtist(String artist) {
+        this.artist = artist;
     }
 
     public short getType() {
@@ -43,5 +53,12 @@ public class GenreEqualizer {
 
     public void setLevelsMb(short[] levelsMb) {
         this.levelsMb = levelsMb;
+    }
+
+    public String getDisplayName() {
+        if (type == 0 && artist != null && !artist.isEmpty()) {
+            return name + " - " + artist;
+        }
+        return name;
     }
 }

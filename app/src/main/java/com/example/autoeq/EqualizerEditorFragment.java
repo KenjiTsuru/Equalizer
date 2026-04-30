@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.SeekBar;
@@ -153,29 +154,48 @@ public class EqualizerEditorFragment extends Fragment {
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(50, 40, 50, 10);
 
-        final EditText input = new EditText(requireContext());
-        input.setHint("Equalizer name");
-        layout.addView(input);
+        final EditText songNameInput = new EditText(requireContext());
+        songNameInput.setHint("Song Name");
+        layout.addView(songNameInput);
+
+        final EditText artistNameInput = new EditText(requireContext());
+        artistNameInput.setHint("Artist Name");
+        layout.addView(artistNameInput);
 
         final Spinner typeSpinner = new Spinner(requireContext());
-        String[] types = {"Song", "Genre", "Artist"};
+        String[] types = {"Song and Artist", "Genre"};
         ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_spinner_item, types);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         typeSpinner.setAdapter(adapter);
         layout.addView(typeSpinner);
+
+        typeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position == 0) { // Song and Artist
+                    songNameInput.setHint("Song Name");
+                    artistNameInput.setVisibility(View.VISIBLE);
+                } else { // Genre
+                    songNameInput.setHint("Genre Name");
+                    artistNameInput.setVisibility(View.GONE);
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
         new AlertDialog.Builder(requireContext())
                 .setTitle("Create your equalizer")
                 .setView(layout)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Create", (dialog, which) -> {
-                    String name = input.getText().toString().trim();
+                    String name = songNameInput.getText().toString().trim();
+                    String artist = artistNameInput.getText().toString().trim();
                     if (name.isEmpty()) name = "Untitled";
 
                     short type = (short) typeSpinner.getSelectedItemPosition();
 
-                    // Using 5 bands as a placeholder or get from systemEq if available
                     int numBands = (systemEq != null) ? systemEq.getNumberOfBands() : 5;
-                    GenreEqualizer eq = new GenreEqualizer(name, type, new int[numBands], new short[numBands]);
+                    GenreEqualizer eq = new GenreEqualizer(name, artist, type, new int[numBands], new short[numBands]);
                     presets.add(eq);
                     presetsByMenuId.put(nextPresetMenuId, eq);
                     nextPresetMenuId++;
@@ -183,7 +203,7 @@ public class EqualizerEditorFragment extends Fragment {
                     updateDrawerMenu(navView);
                     showEqualizerUi();
 
-                    Toast.makeText(requireContext(), "Created: " + name, Toast.LENGTH_SHORT).show();
+                    Toast.makeText(requireContext(), "Created: " + eq.getDisplayName(), Toast.LENGTH_SHORT).show();
                 })
                 .show();
     }
@@ -206,7 +226,7 @@ public class EqualizerEditorFragment extends Fragment {
                 }
             }
             if (menuId != -1) {
-                menu.add(groupId, menuId, android.view.Menu.NONE, eq.getGenreName()).setIcon(android.R.drawable.ic_media_next);
+                menu.add(groupId, menuId, android.view.Menu.NONE, eq.getDisplayName()).setIcon(android.R.drawable.ic_media_next);
             }
         }
     }
@@ -224,7 +244,7 @@ public class EqualizerEditorFragment extends Fragment {
             systemEq = null;
             Toast.makeText(requireContext(),
                     "Equalizer not supported on this device/session: " + t.getClass().getSimpleName(),
-                    Toast.LENGTH_LONG).show();
+                    Toast.LONG).show();
         }
     }
 
