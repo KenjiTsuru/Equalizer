@@ -244,7 +244,7 @@ public class EqualizerEditorFragment extends Fragment {
             systemEq = null;
             Toast.makeText(requireContext(),
                     "Equalizer not supported on this device/session: " + t.getClass().getSimpleName(),
-                    Toast.LONG).show();
+                    Toast.LENGTH_LONG).show();
         }
     }
 
