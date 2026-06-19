@@ -249,22 +249,43 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void buildBandUiFromSystemEqualizer() {
-        bandsContainer.removeAllViews();
+        bandsContainer.removeAllViews(); //
 
-        final short numBands = systemEq.getNumberOfBands();
-        final int span = maxMb - minMb;
+        final short numBands = systemEq.getNumberOfBands(); //
+        final int span = maxMb - minMb; //
 
         for (short band = 0; band < numBands; band++) {
-            final short finalBand = band;
+            final short finalBand = band; //
 
             View bandView = LayoutInflater.from(requireContext())
-                    .inflate(R.layout.equalizer_band_item, bandsContainer, false);
+                    .inflate(R.layout.equalizer_band_item, bandsContainer, false); //
+
+            // Ensure each dynamically added item layout is weighted evenly across the container row
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    1.0f
+            );
+            bandView.setLayoutParams(params);
+
+            TextView label = bandView.findViewById(R.id.eq_band_label);
+            if (label != null && systemEq != null) {
+                // getCenterFreq() returns milliHertz (e.g., 60000 mHz for 60 Hz)
+                int centerFreqHz = systemEq.getCenterFreq(finalBand) / 1000;
+
+                if (centerFreqHz >= 1000) {
+                    // Format values 1000 Hz and above as kHz (e.g., "1 kHz", "14 kHz")
+                    label.setText((centerFreqHz / 1000) + " kHz");
+                } else {
+                    // Keep values below 1000 Hz as Hz (e.g., "60 Hz", "230 Hz")
+                    label.setText(centerFreqHz + " Hz");
+                }
+            }
 
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
 
             sb.setMax(span);
             short currentMb = systemEq.getBandLevel(finalBand);
-            // Centering progress for visualization if needed, or use currentMb
             sb.setProgress(currentMb - minMb);
 
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
