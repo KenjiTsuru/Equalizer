@@ -2,7 +2,6 @@ package com.example.autoeq;
 
 import android.app.AlertDialog;
 import android.os.Bundle;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.view.GravityCompat;
@@ -25,12 +24,8 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
+import java.util.List;
 
-/**
- * A simple {@link Fragment} subclass.
- * Use the {@link EqualizerEditorFragment#newInstance} factory method to
- * create an instance of this fragment.
- */
 public class EqualizerEditorFragment extends Fragment {
 
     private Equalizer systemEq;
@@ -38,57 +33,19 @@ public class EqualizerEditorFragment extends Fragment {
     private NavigationView navView;
     private short minMb, maxMb;
     private LinearLayout bandsContainer;
-    private ArrayList<SelectedEqualizer> presets = new ArrayList<>();
 
-    private int nextPresetMenuId = 1000;
-    private final java.util.Map<Integer, SelectedEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
+    // Firebase Data Handler reference replaces local indexing pools
+    private EqualizerDataHandler dataHandler;
+    private List<SelectedEqualizer> presets = new ArrayList<>();
 
     private View emptyStateText;
     private View eqUiContainer;
     private TextView currentEqNameHeader;
 
-    // TODO: Rename parameter arguments, choose names that match
-    // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
-    private static final String ARG_PARAM1 = "param1";
-    private static final String ARG_PARAM2 = "param2";
-
-    // TODO: Rename and change types of parameters
-    private String mParam1;
-    private String mParam2;
-
-    /**
-     * Use this factory method to create a new instance of
-     * this fragment using the provided parameters.
-     *
-     * @param param1 Parameter 1.
-     * @param param2 Parameter 2.
-     * @return A new instance of fragment EqualizerEditorFragment.
-     */
-    // TODO: Rename and change types and number of parameters
-    public static EqualizerEditorFragment newInstance(String param1, String param2) {
-        EqualizerEditorFragment fragment = new EqualizerEditorFragment();
-        Bundle args = new Bundle();
-        args.putString(ARG_PARAM1, param1);
-        args.putString(ARG_PARAM2, param2);
-        fragment.setArguments(args);
-        return fragment;
-    }
-
-    public EqualizerEditorFragment() {
-    }
+    public EqualizerEditorFragment() {}
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        if (getArguments() != null) {
-            mParam1 = getArguments().getString(ARG_PARAM1);
-            mParam2 = getArguments().getString(ARG_PARAM2);
-        }
-    }
-
-    @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
-                             Bundle savedInstanceState) {
+    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         return inflater.inflate(R.layout.equalizer_fragment, container, false);
     }
 
@@ -100,14 +57,11 @@ public class EqualizerEditorFragment extends Fragment {
         emptyStateText = view.findViewById(R.id.eq_empty_state_text);
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
         currentEqNameHeader = view.findViewById(R.id.eq_name_view);
+        bandsContainer = view.findViewById(R.id.eq_bands_row);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
+        toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
 
-        toolbar.setNavigationOnClickListener(v ->
-                drawerLayout.openDrawer(GravityCompat.START)
-        );
-
-        // Setup the new create button in the drawer header
         View headerView = navView.getHeaderView(0);
         View btnCreate = headerView.findViewById(R.id.btn_create_eq);
         if (btnCreate != null) {
@@ -117,41 +71,69 @@ public class EqualizerEditorFragment extends Fragment {
             });
         }
 
+        // Initialize our data handler layer
+        dataHandler = new EqualizerDataHandler();
+
+        // Handle navigation items by dynamic string matching instead of hardcoded menu IDs
         navView.setNavigationItemSelectedListener(item -> {
-            int id = item.getItemId();
-
-            if (presetsByMenuId.containsKey(id)) {
-                currentEq = presetsByMenuId.get(id);
-                updateCurrentEqDisplay();
-                showEqualizerUi();
-                // implement applyPreset
-                drawerLayout.closeDrawer(GravityCompat.START);
-                return true;
+            String selectedName = item.getTitle().toString();
+            for (SelectedEqualizer eq : presets) {
+                if (eq.getDisplayName().equals(selectedName)) {
+                    applySelectedPreset(eq);
+                    drawerLayout.closeDrawer(GravityCompat.START);
+                    return true;
+                }
             }
-
             drawerLayout.closeDrawer(GravityCompat.START);
             return false;
         });
 
-
-        bandsContainer = view.findViewById(R.id.eq_bands_row);
-
         initSystemEqualizer(0);
-        
-        // Only show UI if we already have presets
-        if (!presets.isEmpty()) {
-            showEqualizerUi();
-        }
+
+        // Start listening directly to Firebase node updates
+        dataHandler.listenToPresets(new EqualizerDataHandler.PresetsListener() {
+            @Override
+            public void onPresetsLoaded(List<SelectedEqualizer> updatedPresets) {
+                presets = updatedPresets;
+                updateDrawerMenu();
+
+                if (!presets.isEmpty()) {
+                    showEqualizerUi();
+                    if (currentEq == null) {
+                        applySelectedPreset(presets.get(0)); // Standard fallback selection
+                    }
+                } else {
+                    if (emptyStateText != null) emptyStateText.setVisibility(View.VISIBLE);
+                    if (eqUiContainer != null) eqUiContainer.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onError(Exception e) {
+                Toast.makeText(getContext(), "Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void applySelectedPreset(SelectedEqualizer eq) {
+        currentEq = eq;
         updateCurrentEqDisplay();
+
+        if (systemEq != null && currentEq != null) {
+            List<Integer> levels = currentEq.getBandLevels();
+            if (levels != null) {
+                for (short i = 0; i < levels.size() && i < systemEq.getNumberOfBands(); i++) {
+                    systemEq.setBandLevel(i, levels.get(i).shortValue());
+                }
+            }
+            // Redraw layout tracks to fit the loaded properties
+            buildBandUiFromSystemEqualizer();
+        }
     }
 
     private void updateCurrentEqDisplay() {
         if (currentEqNameHeader != null) {
-            if (currentEq != null) {
-                currentEqNameHeader.setText(currentEq.getDisplayName());
-            } else {
-                currentEqNameHeader.setText("");
-            }
+            currentEqNameHeader.setText(currentEq != null ? currentEq.getDisplayName() : "");
         }
     }
 
@@ -163,7 +145,6 @@ public class EqualizerEditorFragment extends Fragment {
         }
     }
 
-    // Helper function for pop up menu to name your equalizer
     private void showCreateEqualizerDialog() {
         LinearLayout layout = new LinearLayout(requireContext());
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -207,44 +188,59 @@ public class EqualizerEditorFragment extends Fragment {
                     String artist = artistNameInput.getText().toString().trim();
                     if (name.isEmpty()) name = "Untitled";
 
-                    short type = (short) typeSpinner.getSelectedItemPosition();
-
+                    int type = typeSpinner.getSelectedItemPosition();
                     int numBands = (systemEq != null) ? systemEq.getNumberOfBands() : 5;
-                    SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, new int[numBands], new short[numBands]);
-                    presets.add(eq);
-                    presetsByMenuId.put(nextPresetMenuId, eq);
-                    nextPresetMenuId++;
 
-                    currentEq = eq;
-                    updateCurrentEqDisplay();
-                    showEqualizerUi();
-                    updateDrawerMenu(navView);
+                    // Build modern dynamic generic collection arrays explicitly
+                    List<Integer> bandIds = new ArrayList<>();
+                    List<Integer> initialLevels = new ArrayList<>();
 
-                    Toast.makeText(requireContext(), "Created: " + eq.getDisplayName(), Toast.LENGTH_SHORT).show();
+                    for (short i = 0; i < numBands; i++) {
+                        bandIds.add((int) i);
+                        int level = (systemEq != null) ? systemEq.getBandLevel(i) : 0;
+                        initialLevels.add(level);
+                    }
+
+                    SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
+
+                    // Initialize data handler on the fly if it hasn't been instantiated yet
+                    if (dataHandler == null) {
+                        dataHandler = new EqualizerDataHandler();
+                    }
+
+                    dataHandler.saveEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
+                        @Override
+                        public void onSuccess() {
+                            if (isAdded() && getActivity() != null) {
+                                getActivity().runOnUiThread(() -> {
+                                    applySelectedPreset(eq);
+                                    Toast.makeText(requireContext(), "Saved to Cloud: " + eq.getDisplayName(), Toast.LENGTH_SHORT).show();
+                                });
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Exception e) {
+                            if (isAdded() && getActivity() != null) {
+                                getActivity().runOnUiThread(() -> {
+                                    Toast.makeText(requireContext(), "Cloud Save Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                                });
+                            }
+                        }
+                    });
                 })
                 .show();
     }
 
-    private void updateDrawerMenu(NavigationView navView) {
+    private void updateDrawerMenu() {
         android.view.Menu menu = navView.getMenu();
-
-        for (int i = 1000; i < nextPresetMenuId; i++) {
-            menu.removeItem(i);
-        }
+        menu.clear(); // Safe clean clearing operation execution path
 
         int groupId = 2;
-        for (int i = 0; i < presets.size(); i++) {
-            SelectedEqualizer eq = presets.get(i);
-            int menuId = -1;
-            for (java.util.Map.Entry<Integer, SelectedEqualizer> entry : presetsByMenuId.entrySet()) {
-                if (entry.getValue().equals(eq)) {
-                    menuId = entry.getKey();
-                    break;
-                }
-            }
-            if (menuId != -1) {
-                menu.add(groupId, menuId, android.view.Menu.NONE, eq.getDisplayName()).setIcon(android.R.drawable.ic_media_next);
-            }
+        int dynamicId = 2000;
+        for (SelectedEqualizer eq : presets) {
+            menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+                    .setIcon(android.R.drawable.ic_media_next);
         }
     }
 
@@ -253,55 +249,39 @@ public class EqualizerEditorFragment extends Fragment {
             systemEq = new Equalizer(0, audioSessionId);
             systemEq.setEnabled(true);
 
-            short[] range = systemEq.getBandLevelRange(); // millibels
+            short[] range = systemEq.getBandLevelRange();
             minMb = range[0];
             maxMb = range[1];
-
         } catch (Throwable t) {
             systemEq = null;
-            Toast.makeText(requireContext(),
-                    "Equalizer not supported on this device/session: " + t.getClass().getSimpleName(),
-                    Toast.LENGTH_LONG).show();
+            Toast.makeText(requireContext(), "Equalizer not supported: " + t.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
         }
     }
 
     private void buildBandUiFromSystemEqualizer() {
         bandsContainer.removeAllViews();
+        if (systemEq == null) return;
 
-        final short numBands = systemEq.getNumberOfBands(); //
-        final int span = maxMb - minMb; //
+        final short numBands = systemEq.getNumberOfBands();
+        final int span = maxMb - minMb;
 
         for (short band = 0; band < numBands; band++) {
-            final short finalBand = band; //
+            final short finalBand = band;
 
-            View bandView = LayoutInflater.from(requireContext())
-                    .inflate(R.layout.equalizer_band_item, bandsContainer, false); //
+            View bandView = LayoutInflater.from(requireContext()).inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
-            // Ensure each dynamically added item layout is weighted evenly across the container row
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    1.0f
-            );
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
             bandView.setLayoutParams(params);
 
             TextView label = bandView.findViewById(R.id.eq_band_label);
-            if (label != null && systemEq != null) {
-                // getCenterFreq() returns milliHertz (e.g., 60000 mHz for 60 Hz)
+            if (label != null) {
                 int centerFreqHz = systemEq.getCenterFreq(finalBand) / 1000;
-
-                if (centerFreqHz >= 1000) {
-                    // Format values 1000 Hz and above as kHz (e.g., "1 kHz", "14 kHz")
-                    label.setText((centerFreqHz / 1000) + " kHz");
-                } else {
-                    // Keep values below 1000 Hz as Hz (e.g., "60 Hz", "230 Hz")
-                    label.setText(centerFreqHz + " Hz");
-                }
+                label.setText(centerFreqHz >= 1000 ? (centerFreqHz / 1000) + " kHz" : centerFreqHz + " Hz");
             }
 
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
-
             sb.setMax(span);
+
             short currentMb = systemEq.getBandLevel(finalBand);
             sb.setProgress(currentMb - minMb);
 
@@ -311,6 +291,11 @@ public class EqualizerEditorFragment extends Fragment {
                     if (!fromUser || systemEq == null) return;
                     int targetMb = minMb + progress;
                     systemEq.setBandLevel(finalBand, (short) targetMb);
+
+                    // Keep memory runtime references in sync with real-time hardware values
+                    if (currentEq != null && currentEq.getBandLevels() != null) {
+                        currentEq.getBandLevels().set(finalBand, targetMb);
+                    }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {}

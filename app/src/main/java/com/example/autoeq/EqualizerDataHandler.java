@@ -1,29 +1,99 @@
 package com.example.autoeq;
 
+import android.util.Log;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
+import java.util.ArrayList;
+import java.util.List;
+
 public class EqualizerDataHandler {
-    private SelectedEqualizer equalizer;
+    private static final String TAG = "EqualizerDataHandler";
+    private DatabaseReference userDbRef;
 
-    public EqualizerDataHandler(SelectedEqualizer equalizer) {
-        this.equalizer = equalizer;
+    public interface PresetsListener {
+        void onPresetsLoaded(List<SelectedEqualizer> presets);
+        void onError(Exception e);
     }
 
-    public SelectedEqualizer getEqualizer() {
-        return equalizer;
+    public interface OperationCallback {
+        void onSuccess();
+        void onFailure(Exception e);
     }
 
-    public void setEqualizer(SelectedEqualizer equalizer) {
-        this.equalizer = equalizer;
+    public EqualizerDataHandler() {
+        try {
+            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+            if (user != null && user.getEmail() != null) {
+                // Sanitize email string safely
+                String sanitizedEmail = user.getEmail().replace(".", "_");
+                this.userDbRef = FirebaseDatabase.getInstance()
+                        .getReference("users")
+                        .child(sanitizedEmail)
+                        .child("presets");
+                Log.d(TAG, "DataHandler configured safely for user: " + sanitizedEmail);
+            } else {
+                // Safe Fallback node to stop NullPointerException crashes
+                this.userDbRef = FirebaseDatabase.getInstance().getReference("guest_presets");
+                Log.w(TAG, "No authenticated user discovered. Pointing to guest fallback node.");
+            }
+        } catch (Exception e) {
+            this.userDbRef = FirebaseDatabase.getInstance().getReference("error_fallback");
+            Log.e(TAG, "Failed initializing Firebase Reference structures", e);
+        }
     }
 
-    private void createEqualizer(SelectedEqualizer equalizer) {
+    public void saveEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
+        if (equalizer == null || equalizer.getName() == null) {
+            if (callback != null) callback.onFailure(new IllegalArgumentException("Equalizer data empty"));
+            return;
+        }
 
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        String presetId = userDbRef.push().getKey();
+        if (presetId != null) {
+            userDbRef.child(presetId).setValue(equalizer)
+                    .addOnSuccessListener(aVoid -> {
+                        if (callback != null) callback.onSuccess();
+                    })
+                    .addOnFailureListener(e -> {
+                        if (callback != null) callback.onFailure(e);
+                    });
+        }
     }
 
-    private void saveEqualizer(SelectedEqualizer equalizer) {
+    public void listenToPresets(PresetsListener listener) {
+        if (userDbRef == null) return;
 
-    }
+        userDbRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot snapshot) {
+                List<SelectedEqualizer> presetList = new ArrayList<>();
+                for (DataSnapshot postSnapshot : snapshot.getChildren()) {
+                    try {
+                        SelectedEqualizer eq = postSnapshot.getValue(SelectedEqualizer.class);
+                        if (eq != null) {
+                            presetList.add(eq);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error compiling single data entry schema parsing stream", e);
+                    }
+                }
+                listener.onPresetsLoaded(presetList);
+            }
 
-    private void loadEqualizer(SelectedEqualizer equalizer) {
-
+            @Override
+            public void onCancelled(DatabaseError error) {
+                listener.onError(error.toException());
+            }
+        });
     }
 }
