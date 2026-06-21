@@ -25,7 +25,6 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
-import java.util.Map;
 
 /**
  * A simple {@link Fragment} subclass.
@@ -35,16 +34,18 @@ import java.util.Map;
 public class EqualizerEditorFragment extends Fragment {
 
     private Equalizer systemEq;
+    private SelectedEqualizer currentEq;
     private NavigationView navView;
     private short minMb, maxMb;
     private LinearLayout bandsContainer;
-    private ArrayList<GenreEqualizer> presets = new ArrayList<>();
+    private ArrayList<SelectedEqualizer> presets = new ArrayList<>();
 
     private int nextPresetMenuId = 1000;
-    private final java.util.Map<Integer, GenreEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
+    private final java.util.Map<Integer, SelectedEqualizer> presetsByMenuId = new java.util.LinkedHashMap<>();
 
     private View emptyStateText;
     private View eqUiContainer;
+    private TextView currentEqNameHeader;
 
     // TODO: Rename parameter arguments, choose names that match
     // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
@@ -98,6 +99,7 @@ public class EqualizerEditorFragment extends Fragment {
         navView = view.findViewById(R.id.eq_nav_view);
         emptyStateText = view.findViewById(R.id.eq_empty_state_text);
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
+        currentEqNameHeader = view.findViewById(R.id.eq_name_view);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
 
@@ -119,7 +121,9 @@ public class EqualizerEditorFragment extends Fragment {
             int id = item.getItemId();
 
             if (presetsByMenuId.containsKey(id)) {
-                GenreEqualizer selectedEq = presetsByMenuId.get(id);
+                currentEq = presetsByMenuId.get(id);
+                updateCurrentEqDisplay();
+                showEqualizerUi();
                 // implement applyPreset
                 drawerLayout.closeDrawer(GravityCompat.START);
                 return true;
@@ -137,6 +141,17 @@ public class EqualizerEditorFragment extends Fragment {
         // Only show UI if we already have presets
         if (!presets.isEmpty()) {
             showEqualizerUi();
+        }
+        updateCurrentEqDisplay();
+    }
+
+    private void updateCurrentEqDisplay() {
+        if (currentEqNameHeader != null) {
+            if (currentEq != null) {
+                currentEqNameHeader.setText(currentEq.getDisplayName());
+            } else {
+                currentEqNameHeader.setText("");
+            }
         }
     }
 
@@ -172,10 +187,10 @@ public class EqualizerEditorFragment extends Fragment {
         typeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (position == 0) { // Song and Artist
+                if (position == 0) {
                     songNameInput.setHint("Song Name");
                     artistNameInput.setVisibility(View.VISIBLE);
-                } else { // Genre
+                } else {
                     songNameInput.setHint("Genre Name");
                     artistNameInput.setVisibility(View.GONE);
                 }
@@ -195,13 +210,15 @@ public class EqualizerEditorFragment extends Fragment {
                     short type = (short) typeSpinner.getSelectedItemPosition();
 
                     int numBands = (systemEq != null) ? systemEq.getNumberOfBands() : 5;
-                    GenreEqualizer eq = new GenreEqualizer(name, artist, type, new int[numBands], new short[numBands]);
+                    SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, new int[numBands], new short[numBands]);
                     presets.add(eq);
                     presetsByMenuId.put(nextPresetMenuId, eq);
                     nextPresetMenuId++;
 
-                    updateDrawerMenu(navView);
+                    currentEq = eq;
+                    updateCurrentEqDisplay();
                     showEqualizerUi();
+                    updateDrawerMenu(navView);
 
                     Toast.makeText(requireContext(), "Created: " + eq.getDisplayName(), Toast.LENGTH_SHORT).show();
                 })
@@ -217,9 +234,9 @@ public class EqualizerEditorFragment extends Fragment {
 
         int groupId = 2;
         for (int i = 0; i < presets.size(); i++) {
-            GenreEqualizer eq = presets.get(i);
+            SelectedEqualizer eq = presets.get(i);
             int menuId = -1;
-            for (java.util.Map.Entry<Integer, GenreEqualizer> entry : presetsByMenuId.entrySet()) {
+            for (java.util.Map.Entry<Integer, SelectedEqualizer> entry : presetsByMenuId.entrySet()) {
                 if (entry.getValue().equals(eq)) {
                     menuId = entry.getKey();
                     break;
@@ -249,7 +266,7 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void buildBandUiFromSystemEqualizer() {
-        bandsContainer.removeAllViews(); //
+        bandsContainer.removeAllViews();
 
         final short numBands = systemEq.getNumberOfBands(); //
         final int span = maxMb - minMb; //

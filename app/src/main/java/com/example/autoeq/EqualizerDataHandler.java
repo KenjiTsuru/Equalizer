@@ -1,29 +1,29 @@
 package com.example.autoeq;
 
 public class EqualizerDataHandler {
-    private GenreEqualizer equalizer;
+    private SelectedEqualizer equalizer;
 
-    public EqualizerDataHandler(GenreEqualizer equalizer) {
+    public EqualizerDataHandler(SelectedEqualizer equalizer) {
         this.equalizer = equalizer;
     }
 
-    public GenreEqualizer getEqualizer() {
+    public SelectedEqualizer getEqualizer() {
         return equalizer;
     }
 
-    public void setEqualizer(GenreEqualizer equalizer) {
+    public void setEqualizer(SelectedEqualizer equalizer) {
         this.equalizer = equalizer;
     }
 
-    private void createEqualizer(GenreEqualizer equalizer) {
+    private void createEqualizer(SelectedEqualizer equalizer) {
 
     }
 
-    private void saveEqualizer(GenreEqualizer equalizer) {
+    private void saveEqualizer(SelectedEqualizer equalizer) {
 
     }
 
-    private void loadEqualizer(GenreEqualizer equalizer) {
+    private void loadEqualizer(SelectedEqualizer equalizer) {
 
     }
 }

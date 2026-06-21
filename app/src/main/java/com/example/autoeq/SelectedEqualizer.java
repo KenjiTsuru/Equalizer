@@ -1,13 +1,13 @@
 package com.example.autoeq;
 
-public class GenreEqualizer {
+public class SelectedEqualizer {
     private String name; // Can be Song Name or Genre Name
     private String artist; // Artist name (used if type is Song and Artist)
     private short type; // 0 for Song and Artist, 1 for Genre
     private int[] centerFreqmHz;
     private short[] levelsMb;
 
-    public GenreEqualizer(String name, String artist, short type, int[] centerFreqmHz, short[] levelsMb) {
+    public SelectedEqualizer(String name, String artist, short type, int[] centerFreqmHz, short[] levelsMb) {
         this.name = name;
         this.artist = artist;
         this.type = type;
