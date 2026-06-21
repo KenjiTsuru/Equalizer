@@ -197,8 +197,7 @@ public class EqualizerEditorFragment extends Fragment {
 
                     for (short i = 0; i < numBands; i++) {
                         bandIds.add((int) i);
-                        int level = (systemEq != null) ? systemEq.getBandLevel(i) : 0;
-                        initialLevels.add(level);
+                        initialLevels.add(0);
                     }
 
                     SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
@@ -282,6 +281,7 @@ public class EqualizerEditorFragment extends Fragment {
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
             sb.setMax(span);
 
+            // Reads directly from the hardware, which applySelectedPreset() just safely zeroed out!
             short currentMb = systemEq.getBandLevel(finalBand);
             sb.setProgress(currentMb - minMb);
 
@@ -292,7 +292,7 @@ public class EqualizerEditorFragment extends Fragment {
                     int targetMb = minMb + progress;
                     systemEq.setBandLevel(finalBand, (short) targetMb);
 
-                    // Keep memory runtime references in sync with real-time hardware values
+                    // CRITICAL FIX: Use .set() for List<Integer> instead of array brackets []
                     if (currentEq != null && currentEq.getBandLevels() != null) {
                         currentEq.getBandLevels().set(finalBand, targetMb);
                     }
