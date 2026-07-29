@@ -305,31 +305,17 @@ public class EqualizerEditorFragment extends Fragment {
                         int targetMb = minMb + progress;
                         systemEq.setBandLevel(finalBand, (short) targetMb);
 
-                        // Update our Data Model
                         if (currentEq != null && currentEq.getBandLevels() != null) {
                             currentEq.getBandLevels().set(finalBand, targetMb);
                         }
                     }
 
-                    // TOOLTIP LOGIC: Find the TextView inside the band_item layout
-                    TextView tooltip = bandsContainer.findViewById(R.id.text_bubble);
-                    if (tooltip != null) {
-//                        // 1. Convert to dB for display
-                        int targetDb = (minMb + progress) / 100;
-                        tooltip.setText(targetDb + " dB");
-//
-//                        // 2. Calculate position (Y-axis)
-//                        float percent = (float) progress / sb.getMax();
-//                        float height = seekBar.getHeight();
-//
-//                        // Top is 0, Bottom is height. Since progress increases towards Top:
-//                        float yPos = (1 - percent) * height;
-//
-//                        // Offset the tooltip so it stays above/beside the thumb
-//                        tooltip.setTranslationY(yPos - tooltip.getHeight());
-                    }
 
-                    Log.d("XJXJXJ", "Progress: " + progress + " fromUser: " + fromUser);
+                    if (tooltip != null) {
+                        int targetDb = (minMb + progress);
+                        tooltip.setText(targetDb + " mB");
+                        tooltip.setVisibility(View.VISIBLE);
+                    }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {}

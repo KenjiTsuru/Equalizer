@@ -21,6 +21,7 @@
         android:id="@+id/eq_band_seekbar"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_marginEnd="30dp"
         android:splitTrack="false"
         android:thumbOffset="0dp"
         android:paddingStart="0dp"
@@ -30,13 +31,12 @@
         android:id="@+id/text_bubble"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal|bottom"
-        android:background="@android:color/black"
+        android:layout_gravity="center|end"
         android:textColor="@android:color/white"
-        android:paddingHorizontal="8dp"
-        android:paddingVertical="4dp"
-        android:textSize="14sp"
-        android:elevation="4dp"
+        android:layout_marginTop="5dp"
+        android:layout_marginEnd="5dp"
+        android:padding="2dp"
+        android:textSize="10sp"
         android:text="0"/>
 
 </FrameLayout>
