@@ -48,8 +48,8 @@ public class VerticalSeekBar extends AppCompatSeekBar {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_MOVE:
             case MotionEvent.ACTION_UP:
-                int i=0;
-                i=getMax() - (int) (getMax() * event.getY() / getHeight());
+
+                int i =getMax() - (int) (getMax() * event.getY() / getHeight());
                 setProgress(i);
                 onSizeChanged(getWidth(), getHeight(), 0, 0);
                 break;

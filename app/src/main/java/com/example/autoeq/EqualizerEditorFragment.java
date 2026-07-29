@@ -7,6 +7,8 @@ import androidx.annotation.Nullable;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
+
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -261,6 +263,9 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer.removeAllViews();
         if (systemEq == null) return;
 
+        bandsContainer.setClipChildren(false);
+        bandsContainer.setClipToPadding(false);
+
         final short numBands = systemEq.getNumberOfBands();
         final int span = maxMb - minMb;
 
@@ -269,33 +274,62 @@ public class EqualizerEditorFragment extends Fragment {
 
             View bandView = LayoutInflater.from(requireContext()).inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
+
+            if (bandView instanceof ViewGroup) {
+                ((ViewGroup) bandView).setClipChildren(false);
+                ((ViewGroup) bandView).setClipToPadding(false);
+            }
+
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
             bandView.setLayoutParams(params);
 
+            VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
+            TextView tooltip = bandView.findViewById(R.id.text_bubble);
             TextView label = bandView.findViewById(R.id.eq_band_label);
+
+            sb.setMax(span);
+            short currentMb = systemEq.getBandLevel(finalBand);
+            sb.setProgress(currentMb - minMb);
+
             if (label != null) {
                 int centerFreqHz = systemEq.getCenterFreq(finalBand) / 1000;
                 label.setText(centerFreqHz >= 1000 ? (centerFreqHz / 1000) + " kHz" : centerFreqHz + " Hz");
             }
 
-            VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
-            sb.setMax(span);
 
-            // Reads directly from the hardware, which applySelectedPreset() just safely zeroed out!
-            short currentMb = systemEq.getBandLevel(finalBand);
-            sb.setProgress(currentMb - minMb);
 
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    if (!fromUser || systemEq == null) return;
-                    int targetMb = minMb + progress;
-                    systemEq.setBandLevel(finalBand, (short) targetMb);
+                    if (systemEq != null) {
+                        int targetMb = minMb + progress;
+                        systemEq.setBandLevel(finalBand, (short) targetMb);
 
-                    // CRITICAL FIX: Use .set() for List<Integer> instead of array brackets []
-                    if (currentEq != null && currentEq.getBandLevels() != null) {
-                        currentEq.getBandLevels().set(finalBand, targetMb);
+                        // Update our Data Model
+                        if (currentEq != null && currentEq.getBandLevels() != null) {
+                            currentEq.getBandLevels().set(finalBand, targetMb);
+                        }
                     }
+
+                    // TOOLTIP LOGIC: Find the TextView inside the band_item layout
+                    TextView tooltip = bandsContainer.findViewById(R.id.text_bubble);
+                    if (tooltip != null) {
+//                        // 1. Convert to dB for display
+                        int targetDb = (minMb + progress) / 100;
+                        tooltip.setText(targetDb + " dB");
+//
+//                        // 2. Calculate position (Y-axis)
+//                        float percent = (float) progress / sb.getMax();
+//                        float height = seekBar.getHeight();
+//
+//                        // Top is 0, Bottom is height. Since progress increases towards Top:
+//                        float yPos = (1 - percent) * height;
+//
+//                        // Offset the tooltip so it stays above/beside the thumb
+//                        tooltip.setTranslationY(yPos - tooltip.getHeight());
+                    }
+
+                    Log.d("XJXJXJ", "Progress: " + progress + " fromUser: " + fromUser);
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {}

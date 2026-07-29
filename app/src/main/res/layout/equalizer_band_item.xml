@@ -26,4 +26,17 @@
         android:paddingStart="0dp"
         android:paddingEnd="0dp" />
 
+    <TextView
+        android:id="@+id/text_bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|bottom"
+        android:background="@android:color/black"
+        android:textColor="@android:color/white"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:textSize="14sp"
+        android:elevation="4dp"
+        android:text="0"/>
+
 </FrameLayout>
