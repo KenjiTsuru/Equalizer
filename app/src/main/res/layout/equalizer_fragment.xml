@@ -134,14 +134,6 @@
             </androidx.constraintlayout.widget.ConstraintLayout>
         </FrameLayout>
 
-        <TextView
-            android:id="@+id/eq_name_view"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="TextView"
-            app:layout_anchor="@+id/appBarLayout"
-            app:layout_anchorGravity="end|center" />
-
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
     <!-- Drawer menu -->

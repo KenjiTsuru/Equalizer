@@ -42,7 +42,7 @@ public class EqualizerEditorFragment extends Fragment {
 
     private View emptyStateText;
     private View eqUiContainer;
-    private TextView currentEqNameHeader;
+    private MaterialToolbar toolbar;
 
     public EqualizerEditorFragment() {}
 
@@ -54,11 +54,10 @@ public class EqualizerEditorFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         DrawerLayout drawerLayout = view.findViewById(R.id.eq_drawer);
-        MaterialToolbar toolbar = view.findViewById(R.id.eq_toolbar);
+        toolbar = view.findViewById(R.id.eq_toolbar);
         navView = view.findViewById(R.id.eq_nav_view);
         emptyStateText = view.findViewById(R.id.eq_empty_state_text);
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
-        currentEqNameHeader = view.findViewById(R.id.eq_name_view);
         bandsContainer = view.findViewById(R.id.eq_bands_row);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
@@ -134,8 +133,8 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void updateCurrentEqDisplay() {
-        if (currentEqNameHeader != null) {
-            currentEqNameHeader.setText(currentEq != null ? currentEq.getDisplayName() : "");
+        if (toolbar != null) {
+            toolbar.setTitle(currentEq != null ? currentEq.getDisplayName() : "");
         }
     }
 
