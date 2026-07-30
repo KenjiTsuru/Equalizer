@@ -109,6 +109,19 @@ public class EqualizerEditorFragment extends Fragment {
         dataHandler.listenToPresets(new EqualizerDataHandler.PresetsListener() {
             @Override
             public void onPresetsLoaded(List<SelectedEqualizer> updatedPresets) {
+                String currentId = currentEq != null ? currentEq.getId() : null;
+                int oldIndex = -1;
+
+                // Find the index of the current item in the old list (if it exists)
+                if (currentId != null) {
+                    for (int i = 0; i < presets.size(); i++) {
+                        if (presets.get(i).getId().equals(currentId)) {
+                            oldIndex = i;
+                            break;
+                        }
+                    }
+                }
+
                 presets = updatedPresets;
 
                 String currentQuery = searchBar.getText().toString();
@@ -120,10 +133,38 @@ public class EqualizerEditorFragment extends Fragment {
 
                 if (!presets.isEmpty()) {
                     showEqualizerUi();
-                    if (currentEq == null) {
-                        applySelectedPreset(presets.get(0)); // Standard fallback selection
+
+                    boolean stillExists = false;
+
+                    for(SelectedEqualizer eq : presets) {
+                        if (currentId != null && currentId.equals(eq.getId())){
+                            stillExists = true;
+                            break;
+                        }
                     }
+
+
+                    if (!stillExists && currentId != null) {
+                        int newIndex;
+                        if (oldIndex < presets.size()) {
+                            // Switch to the next one in line (which now occupies the old index)
+                            newIndex = oldIndex;
+                        } else {
+                            // It was the last one in the list, switch to the new last one (above it)
+                            newIndex = presets.size() - 1;
+                        }
+
+                        if (newIndex >= 0) {
+                            applySelectedPreset(presets.get(newIndex));
+                        }
+                    } else if (currentEq == null) {
+                        // Standard fallback for initial load
+                        applySelectedPreset(presets.get(0));
+                    }
+
                 } else {
+                    currentEq = null;
+                    updateCurrentEqDisplay();
                     if (emptyStateText != null) emptyStateText.setVisibility(View.VISIBLE);
                     if (eqUiContainer != null) eqUiContainer.setVisibility(View.GONE);
                 }
