@@ -65,6 +65,21 @@ public class EqualizerEditorFragment extends Fragment {
 
         View headerView = navView.getHeaderView(0);
         View btnCreate = headerView.findViewById(R.id.btn_create_eq);
+        EditText searchBar = headerView.findViewById(R.id.drawer_search_bar);
+
+        if (searchBar != null) {
+            searchBar.addTextChangedListener(new android.text.TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filterDrawerMenu(s.toString());
+                }
+                @Override
+                public void afterTextChanged(android.text.Editable s) {}
+            });
+        }
+
         if (btnCreate != null) {
             btnCreate.setOnClickListener(v -> {
                 drawerLayout.closeDrawer(GravityCompat.START);
@@ -72,7 +87,6 @@ public class EqualizerEditorFragment extends Fragment {
             });
         }
 
-        // Initialize our data handler layer
         dataHandler = new EqualizerDataHandler();
 
         // Handle navigation items by dynamic string matching instead of hardcoded menu IDs
@@ -96,7 +110,13 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onPresetsLoaded(List<SelectedEqualizer> updatedPresets) {
                 presets = updatedPresets;
-                updateDrawerMenu();
+
+                String currentQuery = searchBar.getText().toString();
+                if (currentQuery.isEmpty()) {
+                    updateDrawerMenu();
+                } else {
+                    filterDrawerMenu(currentQuery);
+                }
 
                 if (!presets.isEmpty()) {
                     showEqualizerUi();
@@ -114,6 +134,21 @@ public class EqualizerEditorFragment extends Fragment {
                 Toast.makeText(getContext(), "Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void filterDrawerMenu(String query) {android.view.Menu menu = navView.getMenu();
+        menu.clear(); // Clear current items
+
+        int groupId = 2;
+        int dynamicId = 2000;
+
+        for (SelectedEqualizer eq : presets) {
+            // Only add items that match the search query (case-insensitive)
+            if (eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) {
+                menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+                        .setIcon(android.R.drawable.ic_media_next);
+            }
+        }
     }
 
     private void applySelectedPreset(SelectedEqualizer eq) {

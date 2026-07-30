@@ -22,4 +22,19 @@
         app:iconTint="@color/white"
         app:shapeAppearanceOverlay="@style/ShapeAppearance.App.Square" />
 
+    <EditText
+        android:id="@+id/drawer_search_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center|right"
+        android:layout_marginStart="12dp"
+        android:hint="Search presets..."
+        android:textColor="@android:color/white"
+        android:textColorHint="#CCCCCC"
+        android:backgroundTint="@android:color/white"
+        android:textSize="14sp"
+        android:maxLines="1"
+        android:inputType="text" />
+
+
 </FrameLayout>
