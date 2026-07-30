@@ -145,8 +145,12 @@ public class EqualizerEditorFragment extends Fragment {
         for (SelectedEqualizer eq : presets) {
             // Only add items that match the search query (case-insensitive)
             if (eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) {
-                menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+                android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
                         .setIcon(android.R.drawable.ic_media_next);
+
+                item.setActionView(R.layout.menu_delete_action);
+                View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
+                deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
             }
         }
     }
@@ -273,9 +277,50 @@ public class EqualizerEditorFragment extends Fragment {
 
         int groupId = 2;
         int dynamicId = 2000;
+
         for (SelectedEqualizer eq : presets) {
-            menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+            android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
                     .setIcon(android.R.drawable.ic_media_next);
+
+            item.setActionView(R.layout.menu_delete_action);
+
+            View actionView = item.getActionView();
+            View deleteBtn = actionView.findViewById(R.id.btn_delete_preset);
+
+            deleteBtn.setOnClickListener(v -> {
+                DrawerLayout drawer = getView().findViewById(R.id.eq_drawer);
+                if(drawer != null) drawer.closeDrawer(GravityCompat.START);
+
+                showDeleteConfirmationDialog(eq);
+            });
+        }
+    }
+
+    private void showDeleteConfirmationDialog(SelectedEqualizer eq) {
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Delete Preset")
+                .setMessage("Are you sure you want to delete '" + eq.getDisplayName() + "'?")
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    deletePreset(eq);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void deletePreset(SelectedEqualizer eq) {
+        if (dataHandler != null) {
+            dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
+                @Override
+                public void onSuccess() {
+                    // No need to manually refresh; listenToPresets will trigger automatically
+                    Toast.makeText(getContext(), "Deleted successfully", Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    Toast.makeText(getContext(), "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            });
         }
     }
 

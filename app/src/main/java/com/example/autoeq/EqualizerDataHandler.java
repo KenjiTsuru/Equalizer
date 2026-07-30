@@ -70,6 +70,28 @@ public class EqualizerDataHandler {
         }
     }
 
+    public void deleteEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {    if (equalizer == null || equalizer.getId() == null) {
+        if (callback != null) callback.onFailure(new IllegalArgumentException("Invalid Preset ID"));
+        return;
+    }
+
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        // Use .child(id).removeValue() to delete the specific preset
+        userDbRef.child(equalizer.getId()).removeValue()
+                .addOnSuccessListener(aVoid -> {
+                    Log.d(TAG, "Preset deleted successfully: " + equalizer.getName());
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "Failed to delete preset", e);
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
     public void listenToPresets(PresetsListener listener) {
         if (userDbRef == null) return;
 
@@ -81,6 +103,7 @@ public class EqualizerDataHandler {
                     try {
                         SelectedEqualizer eq = postSnapshot.getValue(SelectedEqualizer.class);
                         if (eq != null) {
+                            eq.setId(postSnapshot.getKey());
                             presetList.add(eq);
                         }
                     } catch (Exception e) {
