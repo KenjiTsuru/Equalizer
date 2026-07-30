@@ -20,7 +20,7 @@
                 android:id="@+id/eq_toolbar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:title="Equalizer" />
+                app:title="" />
         </com.google.android.material.appbar.AppBarLayout>
 
         <FrameLayout
