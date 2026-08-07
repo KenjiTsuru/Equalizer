@@ -43,6 +43,8 @@ public class EqualizerEditorFragment extends Fragment {
     private View emptyStateText;
     private View eqUiContainer;
     private MaterialToolbar toolbar;
+    private short numBands;
+    private int span;
 
     public EqualizerEditorFragment() {}
 
@@ -373,10 +375,17 @@ public class EqualizerEditorFragment extends Fragment {
             short[] range = systemEq.getBandLevelRange();
             minMb = range[0];
             maxMb = range[1];
+            numBands = systemEq.getNumberOfBands();
+            span = maxMb - minMb;
+
         } catch (Throwable t) {
             systemEq = null;
             Toast.makeText(requireContext(), "Equalizer not supported: " + t.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void switchSelectedEqualizer() {
+
     }
 
     private void buildBandUiFromSystemEqualizer() {
@@ -386,8 +395,6 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer.setClipChildren(false);
         bandsContainer.setClipToPadding(false);
 
-        final short numBands = systemEq.getNumberOfBands();
-        final int span = maxMb - minMb;
 
         for (short band = 0; band < numBands; band++) {
             final short finalBand = band;
