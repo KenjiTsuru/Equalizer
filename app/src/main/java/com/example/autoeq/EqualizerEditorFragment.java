@@ -443,9 +443,40 @@ public class EqualizerEditorFragment extends Fragment {
                         tooltip.setText(targetDb + " mB");
                         tooltip.setVisibility(View.VISIBLE);
                     }
+
+                    // Save logic
+                    if (currentEq != null && dataHandler != null) {
+                        // Call updateEqualizer because the preset already exists
+                        dataHandler.updateEqualizer(currentEq, new EqualizerDataHandler.OperationCallback() {
+                            @Override
+                            public void onSuccess() {
+                                Log.d("EQ_SAVE", "Band " + finalBand + " saved successfully");
+                            }
+
+                            @Override
+                            public void onFailure(Exception e) {
+                                Log.e("EQ_SAVE", "Failed to save band progress", e);
+                            }
+                        });
+                    }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-                @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                    if (currentEq != null && dataHandler != null) {
+                        // Call updateEqualizer because the preset already exists
+                        dataHandler.updateEqualizer(currentEq, new EqualizerDataHandler.OperationCallback() {
+                            @Override
+                            public void onSuccess() {
+                                Log.d("EQ_SAVE", "Band " + finalBand + " saved successfully");
+                            }
+
+                            @Override
+                            public void onFailure(Exception e) {
+                                Log.e("EQ_SAVE", "Failed to save band progress", e);
+                            }
+                        });
+                    }
+                }
             });
 
             bandsContainer.addView(bandView);

@@ -47,6 +47,31 @@ public class EqualizerDataHandler {
         }
     }
 
+    /**
+     * Updates an existing equalizer preset in Firebase.
+     * This is used when moving seekbars/sliders.
+     */
+    public void updateEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
+        if (equalizer == null || equalizer.getId() == null) {
+            if (callback != null) callback.onFailure(new Exception("Cannot update: ID is missing"));
+            return;
+        }
+
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new Exception("Database reference missing"));
+            return;
+        }
+
+        // Target the specific ID of the preset and overwrite it with the new levels
+        userDbRef.child(equalizer.getId()).setValue(equalizer)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
     public void saveEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
         if (equalizer == null || equalizer.getName() == null) {
             if (callback != null) callback.onFailure(new IllegalArgumentException("Equalizer data empty"));
@@ -60,6 +85,8 @@ public class EqualizerDataHandler {
 
         String presetId = userDbRef.push().getKey();
         if (presetId != null) {
+            equalizer.setId(presetId);
+
             userDbRef.child(presetId).setValue(equalizer)
                     .addOnSuccessListener(aVoid -> {
                         if (callback != null) callback.onSuccess();
