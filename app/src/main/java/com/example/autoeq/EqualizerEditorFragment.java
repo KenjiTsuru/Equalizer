@@ -437,6 +437,10 @@ public class EqualizerEditorFragment extends Fragment {
             short currentMb = systemEq.getBandLevel(finalBand);
             sb.setProgress(currentMb - minMb);
 
+            if (tooltip != null) {
+                tooltip.setText(currentMb + " mB");
+            }
+
             if (label != null) {
                 int centerFreqHz = systemEq.getCenterFreq(finalBand) / 1000;
                 label.setText(centerFreqHz >= 1000 ? (centerFreqHz / 1000) + " kHz" : centerFreqHz + " Hz");
