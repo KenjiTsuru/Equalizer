@@ -146,8 +146,14 @@ public class EqualizerEditorFragment extends Fragment {
 
         View settingsButton = view.findViewById(R.id.eq_settings_button);
         if (settingsButton != null) {
-            settingsButton.setOnClickListener(v ->
-                    Toast.makeText(requireContext(), "Settings coming soon", Toast.LENGTH_SHORT).show());
+            settingsButton.setOnClickListener(v -> {
+                requireActivity().getSupportFragmentManager().beginTransaction()
+                        .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out, android.R.anim.fade_in, android.R.anim.fade_out)
+                        .hide(this)
+                        .add(R.id.equalizer_fragment_container, new SettingsFragment())
+                        .addToBackStack(null)
+                        .commit();
+            });
         }
 
         // Start listening directly to Firebase node updates
@@ -171,7 +177,7 @@ public class EqualizerEditorFragment extends Fragment {
 
                 presets = updatedPresets;
 
-                String currentQuery = searchBar.getText().toString();
+                String currentQuery = searchBar != null ? searchBar.getText().toString() : "";
                 if (currentQuery.isEmpty()) {
                     updateDrawerMenu();
                 } else {
@@ -225,7 +231,8 @@ public class EqualizerEditorFragment extends Fragment {
         });
     }
 
-    private void filterDrawerMenu(String query) {android.view.Menu menu = navView.getMenu();
+    private void filterDrawerMenu(String query) {
+        android.view.Menu menu = navView.getMenu();
         menu.clear(); // Clear current items
 
         int groupId = 2;
@@ -597,6 +604,14 @@ public class EqualizerEditorFragment extends Fragment {
         if (dataHandler != null) {
             dataHandler.stopListening();
         }
+        // To keep the equalizer working while in settings, we DO NOT release it here.
+        // It will be released when the fragment is actually destroyed (onDestroy) or if we implement
+        // release logic in the Activity.
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
         if (systemEq != null) {
             systemEq.release();
             systemEq = null;
