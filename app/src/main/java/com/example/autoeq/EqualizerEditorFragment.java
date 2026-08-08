@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
@@ -45,6 +46,7 @@ public class EqualizerEditorFragment extends Fragment {
     private View emptyStateText;
     private View eqUiContainer;
     private MaterialToolbar toolbar;
+    private TextView presetNameText;
     private short numBands;
     private int span;
 
@@ -70,6 +72,7 @@ public class EqualizerEditorFragment extends Fragment {
         emptyStateText = view.findViewById(R.id.eq_empty_state_text);
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
         bandsContainer = view.findViewById(R.id.eq_bands_row);
+        presetNameText = view.findViewById(R.id.eq_preset_name);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
         toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
@@ -115,6 +118,24 @@ public class EqualizerEditorFragment extends Fragment {
         });
 
         initSystemEqualizer(0);
+
+        // Global on/off for the system equalizer effect - not tied to any preset.
+        SwitchCompat powerSwitch = view.findViewById(R.id.eq_power_switch);
+        if (powerSwitch != null) {
+            powerSwitch.setEnabled(systemEq != null);
+            powerSwitch.setChecked(systemEq != null && systemEq.getEnabled());
+            powerSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (systemEq != null) {
+                    systemEq.setEnabled(isChecked);
+                }
+            });
+        }
+
+        View settingsButton = view.findViewById(R.id.eq_settings_button);
+        if (settingsButton != null) {
+            settingsButton.setOnClickListener(v ->
+                    Toast.makeText(requireContext(), "Settings coming soon", Toast.LENGTH_SHORT).show());
+        }
 
         // Start listening directly to Firebase node updates
         dataHandler.listenToPresets(new EqualizerDataHandler.PresetsListener() {
@@ -238,8 +259,8 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void updateCurrentEqDisplay() {
-        if (toolbar != null) {
-            toolbar.setTitle(currentEq != null ? currentEq.getDisplayName() : "");
+        if (presetNameText != null) {
+            presetNameText.setText(currentEq != null ? currentEq.getDisplayName() : "");
         }
     }
 
