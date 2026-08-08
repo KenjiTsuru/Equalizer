@@ -9,6 +9,13 @@ import androidx.appcompat.widget.AppCompatSeekBar;
 
 public class VerticalSeekBar extends AppCompatSeekBar {
 
+    // AbsSeekBar keeps its own listener reference private, so onTouchEvent
+    // below (which bypasses super.onTouchEvent() entirely to compute progress
+    // from Y instead of X) has no way to reach it directly. Keeping our own
+    // copy here is what lets onStartTrackingTouch/onStopTrackingTouch actually
+    // fire - previously they never did, for any caller of this view.
+    private OnSeekBarChangeListener changeListener;
+
     public VerticalSeekBar(Context context) {
         super(context);
     }
@@ -19,6 +26,12 @@ public class VerticalSeekBar extends AppCompatSeekBar {
 
     public VerticalSeekBar(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
+    }
+
+    @Override
+    public void setOnSeekBarChangeListener(OnSeekBarChangeListener l) {
+        this.changeListener = l;
+        super.setOnSeekBarChangeListener(l);
     }
 
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -46,18 +59,30 @@ public class VerticalSeekBar extends AppCompatSeekBar {
 
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
-            case MotionEvent.ACTION_MOVE:
-            case MotionEvent.ACTION_UP:
+                if (changeListener != null) changeListener.onStartTrackingTouch(this);
+                updateProgressFromTouch(event);
+                break;
 
-                int i =getMax() - (int) (getMax() * event.getY() / getHeight());
-                setProgress(i);
-                onSizeChanged(getWidth(), getHeight(), 0, 0);
+            case MotionEvent.ACTION_MOVE:
+                updateProgressFromTouch(event);
+                break;
+
+            case MotionEvent.ACTION_UP:
+                updateProgressFromTouch(event);
+                if (changeListener != null) changeListener.onStopTrackingTouch(this);
                 break;
 
             case MotionEvent.ACTION_CANCEL:
+                if (changeListener != null) changeListener.onStopTrackingTouch(this);
                 break;
         }
         return true;
+    }
+
+    private void updateProgressFromTouch(MotionEvent event) {
+        int i = getMax() - (int) (getMax() * event.getY() / getHeight());
+        setProgress(i);
+        onSizeChanged(getWidth(), getHeight(), 0, 0);
     }
 
 }
