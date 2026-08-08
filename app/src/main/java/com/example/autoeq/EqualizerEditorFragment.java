@@ -1,6 +1,7 @@
 package com.example.autoeq;
 
 import android.app.AlertDialog;
+import android.media.audiofx.DynamicsProcessing;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -21,7 +22,6 @@ import android.widget.EditText;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.Toast;
-import android.media.audiofx.Equalizer;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -30,13 +30,28 @@ import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class EqualizerEditorFragment extends Fragment {
 
-    private Equalizer systemEq;
+    // EQ shape: 12 bands, log-spaced 30 Hz-8000 Hz, +/-12 dB range. Stored and
+    // passed around as tenths-of-a-dB integers (e.g. 35 = 3.5 dB) so
+    // SelectedEqualizer's List<Integer> and the SeekBar's integer progress
+    // don't need to change shape just because DynamicsProcessing's native
+    // unit is a float dB rather than the old Equalizer's millibel short.
+    private static final int NUM_BANDS = 12;
+    private static final float[] BAND_FREQUENCIES_HZ = {
+            30f, 50f, 83f, 138f, 229f, 380f, 632f, 1050f, 1744f, 2900f, 4800f, 8000f
+    };
+    private static final float MIN_GAIN_DB = -12f;
+    private static final float MAX_GAIN_DB = 12f;
+    private static final int MIN_LEVEL = Math.round(MIN_GAIN_DB * 10);
+    private static final int MAX_LEVEL = Math.round(MAX_GAIN_DB * 10);
+    private static final int SPAN = MAX_LEVEL - MIN_LEVEL;
+
+    private DynamicsProcessing systemEq;
     private SelectedEqualizer currentEq;
     private NavigationView navView;
-    private short minMb, maxMb;
     private LinearLayout bandsContainer;
 
     // Firebase Data Handler reference replaces local indexing pools
@@ -47,8 +62,6 @@ public class EqualizerEditorFragment extends Fragment {
     private View eqUiContainer;
     private MaterialToolbar toolbar;
     private TextView presetNameText;
-    private short numBands;
-    private int span;
 
     // Debounced save: onProgressChanged is the confirmed-firing callback, so
     // it's what actually schedules the Firebase write. Every progress change
@@ -237,19 +250,19 @@ public class EqualizerEditorFragment extends Fragment {
 
         if (systemEq != null && currentEq != null) {
             List<Integer> levels = currentEq.getBandLevels();
-            int bandCount = systemEq.getNumberOfBands();
 
-            // levels can come back null or shorter than bandCount - a preset saved
-            // before this fix, a Firebase read that hasn't fully resolved yet, or a
-            // preset created on a device with a different band count. Always fully
-            // resync every band instead of skipping, defaulting anything missing to
-            // 0 mB, and write the result back onto currentEq so the in-memory model
-            // is never null/short going forward.
-            List<Integer> safeLevels = new ArrayList<>(bandCount);
-            for (int i = 0; i < bandCount; i++) {
+            // levels can come back null or shorter than NUM_BANDS - a preset saved
+            // before this fix, a Firebase read that hasn't fully resolved yet, or
+            // (now) an old 5-band preset from before the 12-band migration. Always
+            // fully resync every band instead of skipping, defaulting anything
+            // missing to 0 dB, and write the result back onto currentEq so the
+            // in-memory model is never null/short going forward.
+            List<Integer> safeLevels = new ArrayList<>(NUM_BANDS);
+            for (int i = 0; i < NUM_BANDS; i++) {
                 int level = (levels != null && i < levels.size() && levels.get(i) != null) ? levels.get(i) : 0;
                 safeLevels.add(level);
-                systemEq.setBandLevel((short) i, (short) level);
+                systemEq.setPreEqBandAllChannelsTo(i,
+                        new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[i], levelToGainDb(level)));
             }
             currentEq.setBandLevels(safeLevels);
 
@@ -316,14 +329,13 @@ public class EqualizerEditorFragment extends Fragment {
                     if (name.isEmpty()) name = "Untitled";
 
                     int type = typeSpinner.getSelectedItemPosition();
-                    int numBands = (systemEq != null) ? systemEq.getNumberOfBands() : 5;
 
                     // Build modern dynamic generic collection arrays explicitly
                     List<Integer> bandIds = new ArrayList<>();
                     List<Integer> initialLevels = new ArrayList<>();
 
-                    for (short i = 0; i < numBands; i++) {
-                        bandIds.add((int) i);
+                    for (int i = 0; i < NUM_BANDS; i++) {
+                        bandIds.add(i);
                         initialLevels.add(0);
                     }
 
@@ -413,14 +425,29 @@ public class EqualizerEditorFragment extends Fragment {
 
     private void initSystemEqualizer(int audioSessionId) {
         try {
-            systemEq = new Equalizer(0, audioSessionId);
+            DynamicsProcessing.Config config = new DynamicsProcessing.Config.Builder(
+                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+                    /* channelCount= */ 2,
+                    /* preEqInUse= */ true,
+                    /* preEqBandCount= */ NUM_BANDS,
+                    /* mbcInUse= */ false,
+                    /* mbcBandCount= */ 0,
+                    /* postEqInUse= */ false,
+                    /* postEqBandCount= */ 0,
+                    /* limiterInUse= */ false)
+                    .build();
+
+            systemEq = new DynamicsProcessing(/* priority= */ 0, audioSessionId, config);
             systemEq.setEnabled(true);
 
-            short[] range = systemEq.getBandLevelRange();
-            minMb = range[0];
-            maxMb = range[1];
-            numBands = systemEq.getNumberOfBands();
-            span = maxMb - minMb;
+            // The Builder above seeds every band with its own default frequency
+            // spacing; overwrite each one now with our 30 Hz-8000 Hz layout so
+            // the initial engine state goes through the exact same call every
+            // later live update uses.
+            for (int b = 0; b < NUM_BANDS; b++) {
+                systemEq.setPreEqBandAllChannelsTo(b,
+                        new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[b], 0f));
+            }
 
         } catch (Throwable t) {
             systemEq = null;
@@ -436,8 +463,8 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer.setClipToPadding(false);
 
 
-        for (short band = 0; band < numBands; band++) {
-            final short finalBand = band;
+        for (int band = 0; band < NUM_BANDS; band++) {
+            final int finalBand = band;
 
             View bandView = LayoutInflater.from(requireContext()).inflate(R.layout.equalizer_band_item, bandsContainer, false);
 
@@ -454,17 +481,16 @@ public class EqualizerEditorFragment extends Fragment {
             TextView tooltip = bandView.findViewById(R.id.text_bubble);
             TextView label = bandView.findViewById(R.id.eq_band_label);
 
-            sb.setMax(span);
-            short currentMb = systemEq.getBandLevel(finalBand);
-            sb.setProgress(currentMb - minMb);
+            sb.setMax(SPAN);
+            int currentLevel = gainDbToLevel(systemEq.getPreEqBandByChannelIndex(0, finalBand).getGain());
+            sb.setProgress(currentLevel - MIN_LEVEL);
 
             if (tooltip != null) {
-                tooltip.setText(currentMb + " mB");
+                tooltip.setText(formatLevelAsDb(currentLevel));
             }
 
             if (label != null) {
-                int centerFreqHz = systemEq.getCenterFreq(finalBand) / 1000;
-                label.setText(centerFreqHz >= 1000 ? (centerFreqHz / 1000) + " kHz" : centerFreqHz + " Hz");
+                label.setText(formatFrequencyLabel(BAND_FREQUENCIES_HZ[finalBand]));
             }
 
 
@@ -478,20 +504,21 @@ public class EqualizerEditorFragment extends Fragment {
                     // once movement pauses. This is the primary save path -
                     // onStopTrackingTouch isn't reliably called by every seekbar
                     // implementation, so saving doesn't depend on it firing.
+                    int targetLevel = MIN_LEVEL + progress;
+
                     if (systemEq != null) {
-                        int targetMb = minMb + progress;
-                        systemEq.setBandLevel(finalBand, (short) targetMb);
+                        systemEq.setPreEqBandAllChannelsTo(finalBand,
+                                new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[finalBand], levelToGainDb(targetLevel)));
 
                         if (currentEq != null && currentEq.getBandLevels() != null
                                 && finalBand < currentEq.getBandLevels().size()) {
-                            currentEq.getBandLevels().set(finalBand, targetMb);
+                            currentEq.getBandLevels().set(finalBand, targetLevel);
                         }
                     }
 
 
                     if (tooltip != null) {
-                        int targetDb = (minMb + progress);
-                        tooltip.setText(targetDb + " mB");
+                        tooltip.setText(formatLevelAsDb(targetLevel));
                         tooltip.setVisibility(View.VISIBLE);
                     }
 
@@ -517,15 +544,16 @@ public class EqualizerEditorFragment extends Fragment {
      * Saves the full set of band levels for the current preset, read directly
      * from systemEq (the live audio engine) rather than trusting the in-memory
      * currentEq.bandLevels list to have stayed perfectly in sync. systemEq
-     * always holds exactly numBands valid short values, so this can never hand
+     * always holds exactly NUM_BANDS valid bands, so this can never hand
      * Firebase a null or short-length list.
      */
     private void persistCurrentBandLevels() {
         if (currentEq == null || dataHandler == null || systemEq == null) return;
 
-        List<Integer> freshLevels = new ArrayList<>(numBands);
-        for (short i = 0; i < numBands; i++) {
-            freshLevels.add((int) systemEq.getBandLevel(i));
+        List<Integer> freshLevels = new ArrayList<>(NUM_BANDS);
+        for (int i = 0; i < NUM_BANDS; i++) {
+            float gainDb = systemEq.getPreEqBandByChannelIndex(0, i).getGain();
+            freshLevels.add(gainDbToLevel(gainDb));
         }
         currentEq.setBandLevels(freshLevels);
 
@@ -541,6 +569,25 @@ public class EqualizerEditorFragment extends Fragment {
                 Log.e("EQ_SAVE", "Failed to save band levels", e);
             }
         });
+    }
+
+    private static int gainDbToLevel(float gainDb) {
+        return Math.round(gainDb * 10f);
+    }
+
+    private static float levelToGainDb(int level) {
+        return level / 10f;
+    }
+
+    private static String formatLevelAsDb(int level) {
+        return String.format(Locale.US, "%.1f dB", levelToGainDb(level));
+    }
+
+    private static String formatFrequencyLabel(float freqHz) {
+        if (freqHz >= 1000f) {
+            return String.format(Locale.US, "%.1f kHz", freqHz / 1000f);
+        }
+        return Math.round(freqHz) + " Hz";
     }
 
     @Override
