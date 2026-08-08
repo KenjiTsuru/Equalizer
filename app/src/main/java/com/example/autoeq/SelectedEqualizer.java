@@ -68,7 +68,7 @@ public class SelectedEqualizer {
     }
 
     public void setBandLevels(List<Integer> levelsMb) {
-        this.bandLevels = bandLevels;
+        this.bandLevels = levelsMb;
     }
 
     public String getDisplayName() {

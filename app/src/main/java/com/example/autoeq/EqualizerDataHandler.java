@@ -14,6 +14,7 @@ import java.util.List;
 public class EqualizerDataHandler {
     private static final String TAG = "EqualizerDataHandler";
     private DatabaseReference userDbRef;
+    private ValueEventListener presetsListener;
 
     public interface PresetsListener {
         void onPresetsLoaded(List<SelectedEqualizer> presets);
@@ -62,8 +63,43 @@ public class EqualizerDataHandler {
             return;
         }
 
+        if (equalizer.getBandLevels() == null || equalizer.getBandLevels().isEmpty()) {
+            // setValue() below replaces the WHOLE node. Refusing to write here is
+            // what stops a preset that hasn't fully loaded from having its saved
+            // bandLevels wiped out by a save that happens to fire on it.
+            if (callback != null) callback.onFailure(new IllegalStateException("Refusing to save preset with missing band levels"));
+            return;
+        }
+
         // Target the specific ID of the preset and overwrite it with the new levels
         userDbRef.child(equalizer.getId()).setValue(equalizer)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
+    /**
+     * Saves only the bandLevels field for a preset via a partial update instead
+     * of overwriting the whole preset object. This is what onStopTrackingTouch
+     * calls now: cheaper than updateEqualizer() for the common "user moved a
+     * seekbar" case, and it structurally can't touch name/artist/id even if the
+     * in-memory object were ever stale.
+     */
+    public void updateBandLevels(String presetId, List<Integer> bandLevels, OperationCallback callback) {
+        if (presetId == null || bandLevels == null || bandLevels.isEmpty()) {
+            if (callback != null) callback.onFailure(new IllegalArgumentException("Missing preset id or band levels"));
+            return;
+        }
+
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        userDbRef.child(presetId).child("bandLevels").setValue(bandLevels)
                 .addOnSuccessListener(aVoid -> {
                     if (callback != null) callback.onSuccess();
                 })
@@ -94,6 +130,8 @@ public class EqualizerDataHandler {
                     .addOnFailureListener(e -> {
                         if (callback != null) callback.onFailure(e);
                     });
+        } else if (callback != null) {
+            callback.onFailure(new IllegalStateException("Could not generate a preset ID"));
         }
     }
 
@@ -122,7 +160,7 @@ public class EqualizerDataHandler {
     public void listenToPresets(PresetsListener listener) {
         if (userDbRef == null) return;
 
-        userDbRef.addValueEventListener(new ValueEventListener() {
+        presetsListener = new ValueEventListener() {
             @Override
             public void onDataChange(DataSnapshot snapshot) {
                 List<SelectedEqualizer> presetList = new ArrayList<>();
@@ -144,6 +182,20 @@ public class EqualizerDataHandler {
             public void onCancelled(DatabaseError error) {
                 listener.onError(error.toException());
             }
-        });
+        };
+
+        userDbRef.addValueEventListener(presetsListener);
+    }
+
+    /**
+     * Detaches the presets listener. Call this from the Fragment/Activity's
+     * onDestroyView (or equivalent) so Firebase stops calling back into a
+     * destroyed UI and this handler doesn't keep it alive indefinitely.
+     */
+    public void stopListening() {
+        if (userDbRef != null && presetsListener != null) {
+            userDbRef.removeEventListener(presetsListener);
+            presetsListener = null;
+        }
     }
 }

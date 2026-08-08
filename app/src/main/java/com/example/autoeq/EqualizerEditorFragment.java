@@ -2,6 +2,8 @@ package com.example.autoeq;
 
 import android.app.AlertDialog;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.view.GravityCompat;
@@ -46,6 +48,13 @@ public class EqualizerEditorFragment extends Fragment {
     private short numBands;
     private int span;
 
+    // Debounced save: onProgressChanged is the confirmed-firing callback, so
+    // it's what actually schedules the Firebase write. Every progress change
+    // resets this timer; the write only goes out once movement pauses.
+    private final Handler saveHandler = new Handler(Looper.getMainLooper());
+    private final Runnable pendingBandLevelSave = this::persistCurrentBandLevels;
+    private static final long BAND_LEVEL_SAVE_DEBOUNCE_MS = 400;
+
     public EqualizerEditorFragment() {}
 
     @Override
@@ -75,7 +84,7 @@ public class EqualizerEditorFragment extends Fragment {
                 public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                 @Override
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
-                filterDrawerMenu(s.toString());
+                    filterDrawerMenu(s.toString());
                 }
                 @Override
                 public void afterTextChanged(android.text.Editable s) {}
@@ -111,6 +120,8 @@ public class EqualizerEditorFragment extends Fragment {
         dataHandler.listenToPresets(new EqualizerDataHandler.PresetsListener() {
             @Override
             public void onPresetsLoaded(List<SelectedEqualizer> updatedPresets) {
+                if (!isAdded()) return;
+
                 String currentId = currentEq != null ? currentEq.getId() : null;
                 int oldIndex = -1;
 
@@ -174,6 +185,7 @@ public class EqualizerEditorFragment extends Fragment {
 
             @Override
             public void onError(Exception e) {
+                if (!isAdded()) return;
                 Toast.makeText(getContext(), "Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
@@ -204,11 +216,22 @@ public class EqualizerEditorFragment extends Fragment {
 
         if (systemEq != null && currentEq != null) {
             List<Integer> levels = currentEq.getBandLevels();
-            if (levels != null) {
-                for (short i = 0; i < levels.size() && i < systemEq.getNumberOfBands(); i++) {
-                    systemEq.setBandLevel(i, levels.get(i).shortValue());
-                }
+            int bandCount = systemEq.getNumberOfBands();
+
+            // levels can come back null or shorter than bandCount - a preset saved
+            // before this fix, a Firebase read that hasn't fully resolved yet, or a
+            // preset created on a device with a different band count. Always fully
+            // resync every band instead of skipping, defaulting anything missing to
+            // 0 mB, and write the result back onto currentEq so the in-memory model
+            // is never null/short going forward.
+            List<Integer> safeLevels = new ArrayList<>(bandCount);
+            for (int i = 0; i < bandCount; i++) {
+                int level = (levels != null && i < levels.size() && levels.get(i) != null) ? levels.get(i) : 0;
+                safeLevels.add(level);
+                systemEq.setBandLevel((short) i, (short) level);
             }
+            currentEq.setBandLevels(safeLevels);
+
             // Redraw layout tracks to fit the loaded properties
             buildBandUiFromSystemEqualizer();
         }
@@ -384,10 +407,6 @@ public class EqualizerEditorFragment extends Fragment {
         }
     }
 
-    private void switchSelectedEqualizer() {
-
-    }
-
     private void buildBandUiFromSystemEqualizer() {
         bandsContainer.removeAllViews();
         if (systemEq == null) return;
@@ -428,11 +447,18 @@ public class EqualizerEditorFragment extends Fragment {
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    // Updates the live audio engine + in-memory model + tooltip
+                    // immediately. The Firebase write is debounced below: every
+                    // call here resets a short timer, so the write only fires
+                    // once movement pauses. This is the primary save path -
+                    // onStopTrackingTouch isn't reliably called by every seekbar
+                    // implementation, so saving doesn't depend on it firing.
                     if (systemEq != null) {
                         int targetMb = minMb + progress;
                         systemEq.setBandLevel(finalBand, (short) targetMb);
 
-                        if (currentEq != null && currentEq.getBandLevels() != null) {
+                        if (currentEq != null && currentEq.getBandLevels() != null
+                                && finalBand < currentEq.getBandLevels().size()) {
                             currentEq.getBandLevels().set(finalBand, targetMb);
                         }
                     }
@@ -444,38 +470,17 @@ public class EqualizerEditorFragment extends Fragment {
                         tooltip.setVisibility(View.VISIBLE);
                     }
 
-                    // Save logic
                     if (currentEq != null && dataHandler != null) {
-                        // Call updateEqualizer because the preset already exists
-                        dataHandler.updateEqualizer(currentEq, new EqualizerDataHandler.OperationCallback() {
-                            @Override
-                            public void onSuccess() {
-                                Log.d("EQ_SAVE", "Band " + finalBand + " saved successfully");
-                            }
-
-                            @Override
-                            public void onFailure(Exception e) {
-                                Log.e("EQ_SAVE", "Failed to save band progress", e);
-                            }
-                        });
+                        saveHandler.removeCallbacks(pendingBandLevelSave);
+                        saveHandler.postDelayed(pendingBandLevelSave, BAND_LEVEL_SAVE_DEBOUNCE_MS);
                     }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {}
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {
-                    if (currentEq != null && dataHandler != null) {
-                        // Call updateEqualizer because the preset already exists
-                        dataHandler.updateEqualizer(currentEq, new EqualizerDataHandler.OperationCallback() {
-                            @Override
-                            public void onSuccess() {
-                                Log.d("EQ_SAVE", "Band " + finalBand + " saved successfully");
-                            }
-
-                            @Override
-                            public void onFailure(Exception e) {
-                                Log.e("EQ_SAVE", "Failed to save band progress", e);
-                            }
-                        });
-                    }
+                    // If this DOES fire, save immediately instead of waiting out
+                    // the debounce timer scheduled above.
+                    saveHandler.removeCallbacks(pendingBandLevelSave);
+                    persistCurrentBandLevels();
                 }
             });
 
@@ -483,9 +488,43 @@ public class EqualizerEditorFragment extends Fragment {
         }
     }
 
+    /**
+     * Saves the full set of band levels for the current preset, read directly
+     * from systemEq (the live audio engine) rather than trusting the in-memory
+     * currentEq.bandLevels list to have stayed perfectly in sync. systemEq
+     * always holds exactly numBands valid short values, so this can never hand
+     * Firebase a null or short-length list.
+     */
+    private void persistCurrentBandLevels() {
+        if (currentEq == null || dataHandler == null || systemEq == null) return;
+
+        List<Integer> freshLevels = new ArrayList<>(numBands);
+        for (short i = 0; i < numBands; i++) {
+            freshLevels.add((int) systemEq.getBandLevel(i));
+        }
+        currentEq.setBandLevels(freshLevels);
+
+        String presetId = currentEq.getId();
+        dataHandler.updateBandLevels(presetId, freshLevels, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                Log.d("EQ_SAVE", "Band levels saved for " + presetId);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("EQ_SAVE", "Failed to save band levels", e);
+            }
+        });
+    }
+
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        saveHandler.removeCallbacks(pendingBandLevelSave);
+        if (dataHandler != null) {
+            dataHandler.stopListening();
+        }
         if (systemEq != null) {
             systemEq.release();
             systemEq = null;
