@@ -54,8 +54,8 @@
                     android:layout_gravity="end|center_vertical"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="Settings"
-                    android:src="@android:drawable/ic_menu_preferences"
-                    app:tint="?attr/colorOnSurface" />
+                    app:tint="?attr/colorOnSurface"
+                    android:src="@android:drawable/ic_menu_preferences" />
 
             </com.google.android.material.appbar.MaterialToolbar>
         </com.google.android.material.appbar.AppBarLayout>
@@ -82,55 +82,15 @@
                 android:id="@+id/equalizer_ui_container"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:padding="16dp"
+                android:padding="8dp"
                 android:visibility="gone">
-
-                <!-- dB labels -->
-                <LinearLayout
-                    android:id="@+id/eq_labels"
-                    android:layout_width="wrap_content"
-                    android:layout_height="0dp"
-                    android:orientation="vertical"
-                    app:layout_constraintTop_toTopOf="parent"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintStart_toStartOf="parent">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="+12 dB"
-                        android:textStyle="bold"/>
-
-                    <Space
-                        android:layout_width="wrap_content"
-                        android:layout_height="0dp"
-                        android:layout_weight="1"/>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0 dB"
-                        android:textStyle="bold"/>
-
-                    <Space
-                        android:layout_width="wrap_content"
-                        android:layout_height="0dp"
-                        android:layout_weight="1"/>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="-12 dB"
-                        android:textStyle="bold"/>
-                </LinearLayout>
 
                 <!-- Graph area -->
                 <androidx.constraintlayout.widget.ConstraintLayout
                     android:id="@+id/eq_graph"
                     android:layout_width="0dp"
                     android:layout_height="0dp"
-                    android:layout_marginStart="12dp"
-                    app:layout_constraintStart_toEndOf="@id/eq_labels"
+                    app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintBottom_toBottomOf="parent">

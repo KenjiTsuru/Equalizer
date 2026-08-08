@@ -5,13 +5,23 @@
     android:layout_weight="1">
 
     <TextView
+        android:id="@+id/text_bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="2dp"
+        android:textColor="@android:color/white"
+        android:padding="1dp"
+        android:textSize="9sp"
+        android:text="0.0 dB"/>
+
+    <TextView
         android:id="@+id/eq_band_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginBottom="6dp"
-        android:layout_marginEnd="0dp"
-        android:textSize="10sp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="2dp"
+        android:textSize="8sp"
         android:textStyle="bold"
         android:textColor="?android:attr/textColorSecondary"
         android:alpha="0.6"
@@ -21,22 +31,11 @@
         android:id="@+id/eq_band_seekbar"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginEnd="40dp"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
         android:splitTrack="false"
         android:thumbOffset="0dp"
         android:paddingStart="0dp"
         android:paddingEnd="0dp" />
-
-    <TextView
-        android:id="@+id/text_bubble"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center|end"
-        android:textColor="@android:color/white"
-        android:layout_marginTop="5dp"
-        android:layout_marginEnd="2dp"
-        android:padding="2dp"
-        android:textSize="10sp"
-        android:text="0 mB"/>
 
 </FrameLayout>
