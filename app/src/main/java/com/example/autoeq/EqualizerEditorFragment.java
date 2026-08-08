@@ -226,7 +226,9 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onError(Exception e) {
                 if (!isAdded()) return;
-                Toast.makeText(getContext(), "Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                if (com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser() != null) {
+                    Toast.makeText(getContext(), "Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
             }
         });
     }
