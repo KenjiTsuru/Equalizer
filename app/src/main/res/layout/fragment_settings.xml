@@ -1,38 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="?attr/colorSurface"
-    android:clickable="true"
-    android:focusable="true">
+    android:background="#000000"
+    android:padding="24dp">
 
-    <com.google.android.material.appbar.AppBarLayout
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="20dp"
+        android:text="Settings"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <!-- Logout Button pinned to the bottom -->
+    <Button
+        android:id="@+id/btn_logout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="52dp"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="16dp"
+        android:backgroundTint="#A855F7"
+        android:text="Logout"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
 
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/settings_toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:title="Settings"
-            app:navigationIcon="@android:drawable/ic_menu_revert" />
-
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <FrameLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="Settings Content"
-            android:alpha="0.3"
-            android:textSize="18sp" />
-
-    </FrameLayout>
-
-</LinearLayout>
+</RelativeLayout>
