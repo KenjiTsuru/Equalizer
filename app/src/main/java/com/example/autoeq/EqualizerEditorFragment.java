@@ -1,6 +1,7 @@
 package com.example.autoeq;
 
 import android.app.AlertDialog;
+import android.graphics.Color;
 import android.media.audiofx.DynamicsProcessing;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
@@ -74,6 +75,8 @@ public class EqualizerEditorFragment extends Fragment {
     private MaterialToolbar toolbar;
     private TextView presetNameText;
     private TextView sharedTooltip;
+    private final int COLOR_PALE = Color.parseColor("#F3E8FF");
+    private final int COLOR_PURPLE = Color.parseColor("#A855F7");
 
     public EqualizerEditorFragment() {}
 
@@ -828,6 +831,11 @@ public class EqualizerEditorFragment extends Fragment {
             int currentLevel = gainDbToLevel(systemEq.getPreEqBandByChannelIndex(0, finalBand).getGain());
             sb.setProgress(currentLevel - MIN_LEVEL);
 
+            float initalRation = (float) sb.getProgress() / sb.getMax();
+            int initialColor = (int) new android.animation.ArgbEvaluator()
+                    .evaluate(initalRation, COLOR_PALE, COLOR_PURPLE);
+            sb.setProgressTintList(android.content.res.ColorStateList.valueOf(initialColor));
+
             if (label != null) {
                 label.setText(formatFrequencyLabel(BAND_FREQUENCIES_HZ[finalBand]));
             }
@@ -844,6 +852,15 @@ public class EqualizerEditorFragment extends Fragment {
                     // onStopTrackingTouch isn't reliably called by every seekbar
                     // implementation, so saving doesn't depend on it firing.
                     int targetLevel = MIN_LEVEL + progress;
+
+                    float ratio = (float) progress / seekBar.getMax();
+                    int startColor = COLOR_PALE;
+                    int endColor = COLOR_PURPLE;
+
+                    int interpolatedColor =
+                            (int) new android.animation.ArgbEvaluator().evaluate(ratio, startColor, endColor);
+
+                    seekBar.setProgressTintList(android.content.res.ColorStateList.valueOf(interpolatedColor));
 
                     if (systemEq != null) {
                         systemEq.setPreEqBandAllChannelsTo(finalBand,
