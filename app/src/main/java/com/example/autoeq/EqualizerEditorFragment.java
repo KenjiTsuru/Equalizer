@@ -74,6 +74,7 @@ public class EqualizerEditorFragment extends Fragment {
     private MaterialToolbar toolbar;
     private TextView presetNameText;
     private TextView sharedTooltip;
+    private SwitchCompat powerSwitch;
 
     public EqualizerEditorFragment() {}
 
@@ -158,7 +159,7 @@ public class EqualizerEditorFragment extends Fragment {
         initSystemEqualizer(0);
 
         // Global on/off for the system equalizer effect - not tied to any preset.
-        SwitchCompat powerSwitch = view.findViewById(R.id.eq_power_switch);
+        powerSwitch = view.findViewById(R.id.eq_power_switch);
         if (powerSwitch != null) {
             powerSwitch.setEnabled(systemEq != null);
             powerSwitch.setChecked(systemEq != null && systemEq.getEnabled());
@@ -346,6 +347,64 @@ public class EqualizerEditorFragment extends Fragment {
 
             // Redraw layout tracks to fit the loaded properties
             buildBandUiFromSystemEqualizer();
+        }
+    }
+
+    /**
+     * Called by MainActivity whenever the Spotify App Remote SDK reports the
+     * currently playing track has changed (not on every player-state tick -
+     * MainActivity only calls this when the song/artist actually differ from
+     * the last one). Looks for a type-0 (song+artist) preset matching the new
+     * track and switches to it; if none matches, turns the EQ off instead of
+     * leaving whatever preset was previously engaged still applied to a song
+     * it wasn't tuned for. currentEq/the toolbar's displayed name are left
+     * alone when there's no match - only systemEq's enabled state changes.
+     */
+    public void onSpotifyTrackChanged(String songName, String artistName) {
+        if (!isAdded() || systemEq == null) return;
+
+        SelectedEqualizer match = findPresetForTrack(songName, artistName);
+
+        if (match != null) {
+            systemEq.setEnabled(true);
+            syncPowerSwitchUi(true);
+            applySelectedPreset(match);
+        } else {
+            systemEq.setEnabled(false);
+            syncPowerSwitchUi(false);
+        }
+    }
+
+    /**
+     * Same matching rule as isDuplicatePreset uses when creating a preset
+     * (case-insensitive, trimmed name+artist, song-type only) - so "this
+     * would be flagged as a duplicate" and "this matches what's playing" stay
+     * consistent with each other.
+     */
+    private SelectedEqualizer findPresetForTrack(String songName, String artistName) {
+        if (songName == null) return null;
+        String normalizedName = songName.trim().toLowerCase(Locale.US);
+        String normalizedArtist = artistName == null ? "" : artistName.trim().toLowerCase(Locale.US);
+
+        for (SelectedEqualizer eq : presets) {
+            if (eq.getType() != 0) continue; // only song+artist presets, not genre
+            String eqName = eq.getName() == null ? "" : eq.getName().trim().toLowerCase(Locale.US);
+            String eqArtist = eq.getArtist() == null ? "" : eq.getArtist().trim().toLowerCase(Locale.US);
+            if (eqName.equals(normalizedName) && eqArtist.equals(normalizedArtist)) {
+                return eq;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Keeps the visible switch in sync when systemEq's enabled state is
+     * changed programmatically (by track matching) rather than by the user
+     * tapping the switch itself.
+     */
+    private void syncPowerSwitchUi(boolean enabled) {
+        if (powerSwitch != null && powerSwitch.isChecked() != enabled) {
+            powerSwitch.setChecked(enabled);
         }
     }
 

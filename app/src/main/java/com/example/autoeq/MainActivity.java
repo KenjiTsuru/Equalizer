@@ -9,8 +9,6 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import androidx.fragment.app.Fragment;
-
 import com.spotify.android.appremote.api.ConnectionParams;
 import com.spotify.android.appremote.api.Connector;
 import com.spotify.android.appremote.api.SpotifyAppRemote;
@@ -26,6 +24,13 @@ public class MainActivity extends AppCompatActivity {
     private static final String REDIRECT_URI = "com.example.autoeq://spotify-callback"; // Must match dashboard
     private static final int WEB_API_TOKEN_REQUEST_CODE = 1337;
     private SpotifyAppRemote mSpotifyAppRemote; // Controls the local Spotify player
+    private EqualizerEditorFragment equalizerFragment;
+
+    // Last track reported to the Fragment, so a player-state tick that isn't
+    // an actual song change (pause/resume, seek, etc.) doesn't re-trigger
+    // preset matching for a track that's still playing.
+    private String lastTrackedSongName;
+    private String lastTrackedArtistName;
 
     // Cached Web API token for the playlist-import feature. Separate from
     // App Remote's own authorization below - App Remote only covers local
@@ -43,11 +48,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main); // sets the whole view to activity_main
-        Fragment fragment;
+        equalizerFragment = new EqualizerEditorFragment();
 
-        fragment = new EqualizerEditorFragment();
-
-        getSupportFragmentManager().beginTransaction().replace(R.id.equalizer_fragment_container, fragment)
+        getSupportFragmentManager().beginTransaction().replace(R.id.equalizer_fragment_container, equalizerFragment)
                 .commit();
 
 
@@ -96,18 +99,30 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Subscribes to player state updates so we get notified every time the
-    // track changes, is paused, resumed, or skipped.
+    // track changes, is paused, resumed, or skipped. Only acts when the
+    // song/artist actually differ from the last one seen - PlayerState fires
+    // on every change (pause, seek, etc.), not just track changes.
     private void trackCurrentTrack() {
         mSpotifyAppRemote.getPlayerApi()
                 .subscribeToPlayerState()
                 .setEventCallback(playerState -> {
                     final Track track = playerState.track;
-                    if (track != null) {
-                        String songName = track.name;
-                        String artistName = track.artist.name;
-                        Log.d(TAG, "Now Playing: " + songName + " by " + artistName);
+                    if (track == null) return;
 
-                        // TODO: Pass your track metadata to your equalizer processing engine here
+                    String songName = track.name;
+                    String artistName = track.artist != null ? track.artist.name : null;
+
+                    boolean sameAsBefore = songName != null && songName.equals(lastTrackedSongName)
+                            && (artistName == null ? lastTrackedArtistName == null : artistName.equals(lastTrackedArtistName));
+                    if (sameAsBefore) return;
+
+                    lastTrackedSongName = songName;
+                    lastTrackedArtistName = artistName;
+
+                    Log.d(TAG, "Now Playing: " + songName + " by " + artistName);
+
+                    if (equalizerFragment != null) {
+                        equalizerFragment.onSpotifyTrackChanged(songName, artistName);
                     }
                 });
     }
