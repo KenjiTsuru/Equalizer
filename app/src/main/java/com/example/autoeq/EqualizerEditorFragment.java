@@ -61,15 +61,13 @@ public class EqualizerEditorFragment extends Fragment {
     private List<SelectedEqualizer> presets = new ArrayList<>();
     private List<Folder> folders = new ArrayList<>();
 
-    // Drawer navigation state: null means showing the root (folders + top
-    // level presets); otherwise this is the id of the folder currently open.
-    private String currentFolderId = null;
+    // Drawer state: id of the one folder currently expanded (its presets show
+    // indented directly below it), or null if none are expanded.
+    private String expandedFolderId = null;
     // Maps a rendered drawer menu item's id back to what it represents -
-    // a Folder, a SelectedEqualizer, or the BACK_TARGET sentinel - since
-    // NavigationView's Menu only gives us the clicked item's id/title, not
-    // an arbitrary object.
+    // a Folder or a SelectedEqualizer - since NavigationView's Menu only
+    // gives us the clicked item's id/title, not an arbitrary object.
     private final Map<Integer, Object> menuItemTargets = new HashMap<>();
-    private static final Object BACK_TARGET = new Object();
 
     private SpotifyWebApiClient spotifyWebApiClient;
 
@@ -117,7 +115,12 @@ public class EqualizerEditorFragment extends Fragment {
                 public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                 @Override
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
-                    filterDrawerMenu(s.toString());
+                    String query = s.toString();
+                    if (query.isEmpty()) {
+                        updateDrawerMenu();
+                    } else {
+                        filterDrawerMenu(query);
+                    }
                 }
                 @Override
                 public void afterTextChanged(android.text.Editable s) {}
@@ -144,12 +147,16 @@ public class EqualizerEditorFragment extends Fragment {
                 drawerLayout.closeDrawer(GravityCompat.START);
                 return true;
             } else if (target instanceof Folder) {
-                currentFolderId = ((Folder) target).getId();
-                updateDrawerMenu();
-                return true;
-            } else if (target == BACK_TARGET) {
-                currentFolderId = null;
-                updateDrawerMenu();
+                String tappedId = ((Folder) target).getId();
+                expandedFolderId = tappedId.equals(expandedFolderId) ? null : tappedId;
+                // NavigationView suspends its own menu-refresh logic while
+                // still inside this click callback - rebuilding synchronously
+                // here updates expandedFolderId and the underlying Menu data
+                // correctly, but the visible list silently doesn't reflect it
+                // until something else triggers a redraw. Posting defers the
+                // rebuild until after this callback returns, once that
+                // suspension has lifted.
+                navView.post(this::updateDrawerMenu);
                 return true;
             }
 
@@ -283,6 +290,19 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /**
+     * Derives a menu item id from the object's own permanent Firebase key
+     * instead of its position in the list. Position-based ids (a counter
+     * starting fresh each render) break as soon as the list reorders itself
+     * - e.g. expanding a folder inserts items above others, so whatever used
+     * to be at id 2002 is a different item after the rebuild. A hash of the
+     * item's own stable id means the same folder or preset always gets the
+     * same menu id no matter how many times the list above it has changed.
+     */
+    private static int stableMenuItemId(String firebaseId) {
+        return firebaseId.hashCode() & 0x7FFFFFFF;
+    }
+
+    /**
      * Renders the search-filtered view: presets only, matched by name/artist,
      * searched across ALL presets regardless of folder or which folder is
      * currently open. Folders themselves are never matched or shown here.
@@ -293,20 +313,20 @@ public class EqualizerEditorFragment extends Fragment {
         menuItemTargets.clear();
 
         int groupId = 2;
-        int dynamicId = 2000;
+        menu.setGroupCheckable(groupId, false, false);
 
         for (SelectedEqualizer eq : presets) {
             // Only add items that match the search query (case-insensitive)
             if (eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) {
-                android.view.MenuItem item = menu.add(groupId, dynamicId, android.view.Menu.NONE, eq.getDisplayName())
+                int presetMenuId = stableMenuItemId(eq.getId());
+                android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, eq.getDisplayName())
                         .setIcon(android.R.drawable.ic_media_next);
 
                 item.setActionView(R.layout.menu_delete_action);
                 View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
                 deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
 
-                menuItemTargets.put(dynamicId, eq);
-                dynamicId++;
+                menuItemTargets.put(presetMenuId, eq);
             }
         }
     }
@@ -426,7 +446,7 @@ public class EqualizerEditorFragment extends Fragment {
                     }
 
                     SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
-                    eq.setFolderId(currentFolderId);
+                    eq.setFolderId(expandedFolderId);
 
                     // Initialize data handler on the fly if it hasn't been instantiated yet
                     if (dataHandler == null) {
@@ -669,9 +689,9 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /**
-     * Renders the drawer at the root (folders + top-level presets) or, when
-     * currentFolderId is set, a back item followed by just that folder's
-     * presets.
+     * Renders the drawer: every folder, with that folder's presets inserted
+     * indented directly below it if it's the currently expanded one, followed
+     * by top-level presets (not in any folder).
      */
     private void updateDrawerMenu() {
         android.view.Menu menu = navView.getMenu();
@@ -679,26 +699,50 @@ public class EqualizerEditorFragment extends Fragment {
         menuItemTargets.clear();
 
         int groupId = 2;
-        int dynamicId = 2000;
+        menu.setGroupCheckable(groupId, false, false);
 
-        if (currentFolderId != null) {
-            menu.add(groupId, dynamicId, android.view.Menu.NONE, "\u2039 Back");
-            menuItemTargets.put(dynamicId, BACK_TARGET);
-            dynamicId++;
-        } else {
-            for (Folder folder : folders) {
-                menu.add(groupId, dynamicId, android.view.Menu.NONE, "\uD83D\uDCC1 " + folder.getName());
-                menuItemTargets.put(dynamicId, folder);
-                dynamicId++;
+        for (Folder folder : folders) {
+            int folderMenuId = stableMenuItemId(folder.getId());
+            android.view.MenuItem folderItem = menu.add(groupId, folderMenuId, android.view.Menu.NONE, folder.getName())
+                    .setIcon(android.R.drawable.ic_menu_agenda);
+
+            // Give folder items the same action-view structure every other
+            // item has, just with the delete button hidden - not wiring up
+            // folder deletion yet (still an open question what happens to the
+            // presets inside), but keeping every row structurally identical
+            // avoids relying on NavigationView's item recycling handling a
+            // mix of "has an action view" / "doesn't" correctly.
+            folderItem.setActionView(R.layout.menu_delete_action);
+            View folderActionView = folderItem.getActionView();
+            if (folderActionView != null) {
+                View folderDeleteBtn = folderActionView.findViewById(R.id.btn_delete_preset);
+                if (folderDeleteBtn != null) folderDeleteBtn.setVisibility(View.INVISIBLE);
+            }
+
+            menuItemTargets.put(folderMenuId, folder);
+
+            if (!folder.getId().equals(expandedFolderId)) continue;
+
+            for (SelectedEqualizer eq : presets) {
+                if (!folder.getId().equals(eq.getFolderId())) continue;
+
+                int presetMenuId = stableMenuItemId(eq.getId());
+                android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, "     " + eq.getDisplayName())
+                        .setIcon(android.R.drawable.ic_media_next);
+
+                item.setActionView(R.layout.menu_delete_action);
+                View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
+                deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
+
+                menuItemTargets.put(presetMenuId, eq);
             }
         }
 
         for (SelectedEqualizer eq : presets) {
-            String eqFolderId = eq.getFolderId();
-            boolean belongsHere = currentFolderId == null ? eqFolderId == null : currentFolderId.equals(eqFolderId);
-            if (!belongsHere) continue;
+            if (eq.getFolderId() != null) continue;
 
-            android.view.MenuItem item = menu.add(groupId, dynamicId, android.view.Menu.NONE, eq.getDisplayName())
+            int presetMenuId = stableMenuItemId(eq.getId());
+            android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, eq.getDisplayName())
                     .setIcon(android.R.drawable.ic_media_next);
 
             item.setActionView(R.layout.menu_delete_action);
@@ -713,8 +757,7 @@ public class EqualizerEditorFragment extends Fragment {
                 showDeleteConfirmationDialog(eq);
             });
 
-            menuItemTargets.put(dynamicId, eq);
-            dynamicId++;
+            menuItemTargets.put(presetMenuId, eq);
         }
     }
 
