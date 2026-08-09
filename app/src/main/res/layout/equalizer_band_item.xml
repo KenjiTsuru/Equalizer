@@ -25,9 +25,9 @@
         android:minHeight="0dp"
         android:splitTrack="false"
         android:thumbOffset="0dp"
-        android:paddingStart="0dp"
-        android:paddingEnd="0dp"
+        android:paddingStart="11dp"
+        android:paddingEnd="11dp"
         android:thumbTint="#A855F7"
-        android:progressBackgroundTint="#444444" />
+        android:progressDrawable="@drawable/seekbar_gradient" />
 
 </FrameLayout>

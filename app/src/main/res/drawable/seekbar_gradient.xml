@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 1. The Background (The grey track behind the progress) -->
+    <item android:id="@android:id/background">
+        <inset android:insetLeft="8dp" android:insetRight="8dp">
+            <shape>
+                <corners android:radius="10dp" />
+                <solid android:color="#444444" />
+
+            </shape>
+        </inset>
+    </item>
+
+    <!-- 2. The Progress (The gradient part) -->
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape>
+                <corners android:radius="10dp" />
+                <gradient
+                    android:startColor="#F3E8FF"
+                    android:endColor="#A855F7"
+                    android:type="linear"
+                    android:angle="0" />
+                <!-- Note: Angle 0 is Left-to-Right.
+                     Because VerticalSeekBar rotates the bar -90 degrees,
+                     Left becomes Bottom and Right becomes Top. -->
+            </shape>
+        </clip>
+    </item>
+
+</layer-list>
