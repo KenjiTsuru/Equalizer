@@ -16,7 +16,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.Toast;
@@ -27,10 +29,10 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Set;
 
 public class EqualizerEditorFragment extends Fragment {
 
@@ -62,10 +64,14 @@ public class EqualizerEditorFragment extends Fragment {
     // Drawer state: id of the one folder currently expanded (its presets show
     // indented directly below it), or null if none are expanded.
     private String expandedFolderId = null;
-    // Maps a rendered drawer menu item's id back to what it represents -
-    // a Folder or a SelectedEqualizer - since NavigationView's Menu only
-    // gives us the clicked item's id/title, not an arbitrary object.
-    private final Map<Integer, Object> menuItemTargets = new HashMap<>();
+
+    // Selection mode: long-pressing a row enters it, showing a checkbox on
+    // every row and swapping the + button for delete/move/exit buttons.
+    // Regular taps then toggle selection instead of their normal action
+    // until exited.
+    private boolean selectionMode = false;
+    private final Set<String> selectedPresetIds = new HashSet<>();
+    private final Set<String> selectedFolderIds = new HashSet<>();
 
     private SpotifyWebApiClient spotifyWebApiClient;
 
@@ -75,6 +81,11 @@ public class EqualizerEditorFragment extends Fragment {
     private TextView presetNameText;
     private TextView sharedTooltip;
     private SwitchCompat powerSwitch;
+    private EditText searchBar;
+    private View btnCreateEq;
+    private View btnDeleteSelected;
+    private View btnMoveSelected;
+    private View btnExitSelection;
 
     public EqualizerEditorFragment() {}
 
@@ -98,8 +109,11 @@ public class EqualizerEditorFragment extends Fragment {
         toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
 
         View headerView = navView.getHeaderView(0);
-        View btnCreate = headerView.findViewById(R.id.btn_create_eq);
-        EditText searchBar = headerView.findViewById(R.id.drawer_search_bar);
+        btnCreateEq = headerView.findViewById(R.id.btn_create_eq);
+        btnDeleteSelected = headerView.findViewById(R.id.btn_delete_selected);
+        btnMoveSelected = headerView.findViewById(R.id.btn_move_selected);
+        btnExitSelection = headerView.findViewById(R.id.btn_exit_selection);
+        searchBar = headerView.findViewById(R.id.drawer_search_bar);
 
         if (searchBar != null) {
             searchBar.addTextChangedListener(new android.text.TextWatcher() {
@@ -107,54 +121,40 @@ public class EqualizerEditorFragment extends Fragment {
                 public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                 @Override
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
-                    String query = s.toString();
-                    if (query.isEmpty()) {
-                        updateDrawerMenu();
-                    } else {
-                        filterDrawerMenu(query);
-                    }
+                    refreshDrawerList();
                 }
                 @Override
                 public void afterTextChanged(android.text.Editable s) {}
             });
         }
 
-        if (btnCreate != null) {
-            btnCreate.setOnClickListener(v -> {
+        if (btnCreateEq != null) {
+            btnCreateEq.setOnClickListener(v -> {
                 drawerLayout.closeDrawer(GravityCompat.START);
                 showCreateChooserDialog();
             });
         }
 
+        if (btnDeleteSelected != null) {
+            btnDeleteSelected.setOnClickListener(v -> showDeleteSelectedConfirmation());
+        }
+
+        if (btnMoveSelected != null) {
+            btnMoveSelected.setOnClickListener(v -> showMoveToFolderDialog());
+        }
+
+        if (btnExitSelection != null) {
+            btnExitSelection.setOnClickListener(v -> {
+                setSelectionMode(false);
+                refreshDrawerList();
+            });
+        }
+
         dataHandler = new EqualizerDataHandler();
 
-        // Handle navigation items by looking up what the tapped item represents
-        // (folder / preset / back) instead of matching on title text, since
-        // folder and preset names could otherwise collide.
-        navView.setNavigationItemSelectedListener(item -> {
-            Object target = menuItemTargets.get(item.getItemId());
-
-            if (target instanceof SelectedEqualizer) {
-                applySelectedPreset((SelectedEqualizer) target);
-                drawerLayout.closeDrawer(GravityCompat.START);
-                return true;
-            } else if (target instanceof Folder) {
-                String tappedId = ((Folder) target).getId();
-                expandedFolderId = tappedId.equals(expandedFolderId) ? null : tappedId;
-                // NavigationView suspends its own menu-refresh logic while
-                // still inside this click callback - rebuilding synchronously
-                // here updates expandedFolderId and the underlying Menu data
-                // correctly, but the visible list silently doesn't reflect it
-                // until something else triggers a redraw. Posting defers the
-                // rebuild until after this callback returns, once that
-                // suspension has lifted.
-                navView.post(this::updateDrawerMenu);
-                return true;
-            }
-
-            drawerLayout.closeDrawer(GravityCompat.START);
-            return false;
-        });
+        // Every row now handles its own tap/long-press directly (see
+        // buildDrawerRowView) via a full-width custom view, so there's
+        // nothing left for NavigationView's own item-selected dispatch to do.
 
         initSystemEqualizer(0);
 
@@ -203,12 +203,7 @@ public class EqualizerEditorFragment extends Fragment {
 
                 presets = updatedPresets;
 
-                String currentQuery = searchBar != null ? searchBar.getText().toString() : "";
-                if (currentQuery.isEmpty()) {
-                    updateDrawerMenu();
-                } else {
-                    filterDrawerMenu(currentQuery);
-                }
+                refreshDrawerList();
 
                 if (!presets.isEmpty()) {
                     showEqualizerUi();
@@ -263,12 +258,7 @@ public class EqualizerEditorFragment extends Fragment {
             public void onFoldersLoaded(List<Folder> updatedFolders) {
                 if (!isAdded()) return;
                 folders = updatedFolders;
-
-                String currentQuery = searchBar != null ? searchBar.getText().toString() : "";
-                if (currentQuery.isEmpty()) {
-                    updateDrawerMenu();
-                }
-                // Folders never show up in search results, so no refresh needed there.
+                refreshDrawerList();
             }
 
             @Override
@@ -281,17 +271,26 @@ public class EqualizerEditorFragment extends Fragment {
         });
     }
 
+    /** Re-renders whichever view is currently showing (search results or the normal drawer). */
+    private void refreshDrawerList() {
+        String query = searchBar != null ? searchBar.getText().toString() : "";
+        if (query.isEmpty()) {
+            updateDrawerMenu();
+        } else {
+            filterDrawerMenu(query);
+        }
+    }
+
     /**
-     * Derives a menu item id from the object's own permanent Firebase key
-     * instead of its position in the list. Position-based ids (a counter
-     * starting fresh each render) break as soon as the list reorders itself
-     * - e.g. expanding a folder inserts items above others, so whatever used
-     * to be at id 2002 is a different item after the rebuild. A hash of the
-     * item's own stable id means the same folder or preset always gets the
-     * same menu id no matter how many times the list above it has changed.
+     * Same idea as refreshDrawerList, but deferred a frame. NavigationView
+     * suspends its own menu-refresh logic while still inside handling a
+     * click - rebuilding synchronously from within a row's own click/
+     * long-click listener updates the underlying data correctly, but the
+     * visible list silently won't reflect it until something else triggers a
+     * redraw. Used for anything triggered directly from a row tap.
      */
-    private static int stableMenuItemId(String firebaseId) {
-        return firebaseId.hashCode() & 0x7FFFFFFF;
+    private void scheduleDrawerRefresh() {
+        navView.post(this::refreshDrawerList);
     }
 
     /**
@@ -302,25 +301,270 @@ public class EqualizerEditorFragment extends Fragment {
     private void filterDrawerMenu(String query) {
         android.view.Menu menu = navView.getMenu();
         menu.clear();
-        menuItemTargets.clear();
 
         int groupId = 2;
-        menu.setGroupCheckable(groupId, false, false);
+        int dynamicId = 2000;
 
         for (SelectedEqualizer eq : presets) {
-            // Only add items that match the search query (case-insensitive)
-            if (eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) {
-                int presetMenuId = stableMenuItemId(eq.getId());
-                android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, eq.getDisplayName())
-                        .setIcon(android.R.drawable.ic_media_next);
+            if (!eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) continue;
 
-                item.setActionView(R.layout.menu_delete_action);
-                View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
-                deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
+            android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
+            item.setActionView(buildDrawerRowView(
+                    eq.getDisplayName(),
+                    android.R.drawable.ic_media_next,
+                    selectedPresetIds.contains(eq.getId()),
+                    v -> onPresetRowClicked(eq),
+                    v -> onPresetRowLongClicked(eq)
+            ));
+        }
+    }
 
-                menuItemTargets.put(presetMenuId, eq);
+    /**
+     * Renders the drawer: every folder, with that folder's presets inserted
+     * indented directly below it if it's the currently expanded one, followed
+     * by top-level presets (not in any folder). In selection mode every row
+     * shows a checkbox reflecting whether it's currently selected.
+     */
+    private void updateDrawerMenu() {
+        android.view.Menu menu = navView.getMenu();
+        menu.clear();
+
+        int groupId = 2;
+        int dynamicId = 2000;
+
+        for (Folder folder : folders) {
+            android.view.MenuItem folderItem = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
+            folderItem.setActionView(buildDrawerRowView(
+                    folder.getName(),
+                    android.R.drawable.ic_menu_agenda,
+                    selectedFolderIds.contains(folder.getId()),
+                    v -> onFolderRowClicked(folder),
+                    v -> onFolderRowLongClicked(folder)
+            ));
+
+            if (!folder.getId().equals(expandedFolderId)) continue;
+
+            for (SelectedEqualizer eq : presets) {
+                if (!folder.getId().equals(eq.getFolderId())) continue;
+
+                android.view.MenuItem presetItem = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
+                presetItem.setActionView(buildDrawerRowView(
+                        "     " + eq.getDisplayName(),
+                        android.R.drawable.ic_media_next,
+                        selectedPresetIds.contains(eq.getId()),
+                        v -> onPresetRowClicked(eq),
+                        v -> onPresetRowLongClicked(eq)
+                ));
             }
         }
+
+        for (SelectedEqualizer eq : presets) {
+            if (eq.getFolderId() != null) continue;
+
+            android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
+            item.setActionView(buildDrawerRowView(
+                    eq.getDisplayName(),
+                    android.R.drawable.ic_media_next,
+                    selectedPresetIds.contains(eq.getId()),
+                    v -> onPresetRowClicked(eq),
+                    v -> onPresetRowLongClicked(eq)
+            ));
+        }
+    }
+
+    /**
+     * Builds one full-width drawer row as a MenuItem's action view. This
+     * entirely replaces NavigationView's default item rendering (and the old
+     * small delete-button action view) with a view that handles its own tap
+     * and long-press directly - NavigationView's Menu API has no long-click
+     * callback of its own, so a custom view is the only way to detect one.
+     */
+    private View buildDrawerRowView(String title, int iconRes, boolean checked,
+                                    View.OnClickListener onClick, View.OnLongClickListener onLongClick) {
+        View row = LayoutInflater.from(requireContext()).inflate(R.layout.menu_preset_row, null, false);
+
+        ImageView icon = row.findViewById(R.id.row_icon);
+        TextView titleView = row.findViewById(R.id.row_title);
+        CheckBox checkbox = row.findViewById(R.id.row_checkbox);
+
+        icon.setImageResource(iconRes);
+        titleView.setText(title);
+        checkbox.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+        checkbox.setChecked(checked);
+
+        row.setOnClickListener(onClick);
+        row.setOnLongClickListener(onLongClick);
+
+        return row;
+    }
+
+    private void onFolderRowClicked(Folder folder) {
+        if (selectionMode) {
+            toggleFolderSelection(folder.getId());
+            return;
+        }
+        expandedFolderId = folder.getId().equals(expandedFolderId) ? null : folder.getId();
+        scheduleDrawerRefresh();
+    }
+
+    private boolean onFolderRowLongClicked(Folder folder) {
+        if (!selectionMode) setSelectionMode(true);
+        toggleFolderSelection(folder.getId());
+        return true;
+    }
+
+    private void toggleFolderSelection(String folderId) {
+        if (!selectedFolderIds.remove(folderId)) {
+            selectedFolderIds.add(folderId);
+        }
+        scheduleDrawerRefresh();
+    }
+
+    private void onPresetRowClicked(SelectedEqualizer eq) {
+        if (selectionMode) {
+            togglePresetSelection(eq.getId());
+            return;
+        }
+        applySelectedPreset(eq);
+        View root = getView();
+        DrawerLayout drawer = root != null ? root.findViewById(R.id.eq_drawer) : null;
+        if (drawer != null) drawer.closeDrawer(GravityCompat.START);
+    }
+
+    private boolean onPresetRowLongClicked(SelectedEqualizer eq) {
+        if (!selectionMode) setSelectionMode(true);
+        togglePresetSelection(eq.getId());
+        return true;
+    }
+
+    private void togglePresetSelection(String presetId) {
+        if (!selectedPresetIds.remove(presetId)) {
+            selectedPresetIds.add(presetId);
+        }
+        scheduleDrawerRefresh();
+    }
+
+    /** Toggles between the + button and the delete/move/exit buttons. Doesn't refresh the list itself - callers do that once all state changes are settled. */
+    private void setSelectionMode(boolean enabled) {
+        selectionMode = enabled;
+        if (!enabled) {
+            selectedPresetIds.clear();
+            selectedFolderIds.clear();
+        }
+        if (btnCreateEq != null) btnCreateEq.setVisibility(enabled ? View.GONE : View.VISIBLE);
+        if (btnDeleteSelected != null) btnDeleteSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        if (btnMoveSelected != null) btnMoveSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        if (btnExitSelection != null) btnExitSelection.setVisibility(enabled ? View.VISIBLE : View.GONE);
+    }
+
+    private void showDeleteSelectedConfirmation() {
+        int presetCount = selectedPresetIds.size();
+        int folderCount = selectedFolderIds.size();
+        if (presetCount == 0 && folderCount == 0) return;
+
+        StringBuilder message = new StringBuilder("Delete ");
+        if (folderCount > 0) {
+            message.append(folderCount).append(folderCount == 1 ? " folder" : " folders");
+            message.append(" (and everything inside ").append(folderCount == 1 ? "it" : "them").append(")");
+        }
+        if (presetCount > 0) {
+            if (folderCount > 0) message.append(" and ");
+            message.append(presetCount).append(presetCount == 1 ? " preset" : " presets");
+        }
+        message.append("?");
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Delete selected")
+                .setMessage(message.toString())
+                .setPositiveButton("Delete", (dialog, which) -> deleteSelected())
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void deleteSelected() {
+        if (dataHandler == null) return;
+
+        // Deleting a folder deletes every preset inside it too, not just the
+        // folder itself.
+        for (Folder folder : folders) {
+            if (!selectedFolderIds.contains(folder.getId())) continue;
+
+            for (SelectedEqualizer eq : presets) {
+                if (!folder.getId().equals(eq.getFolderId())) continue;
+                dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
+                    @Override public void onSuccess() {}
+                    @Override public void onFailure(Exception e) {
+                        Log.e("FOLDER_DELETE", "Failed to delete preset in folder: " + eq.getName(), e);
+                    }
+                });
+            }
+
+            dataHandler.deleteFolder(folder, new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() {}
+                @Override public void onFailure(Exception e) {
+                    Log.e("FOLDER_DELETE", "Failed to delete folder: " + folder.getName(), e);
+                }
+            });
+        }
+
+        for (SelectedEqualizer eq : presets) {
+            if (!selectedPresetIds.contains(eq.getId())) continue;
+            // Already handled above if it was inside a folder we just deleted.
+            if (eq.getFolderId() != null && selectedFolderIds.contains(eq.getFolderId())) continue;
+
+            dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() {}
+                @Override public void onFailure(Exception e) {
+                    Log.e("PRESET_DELETE", "Failed to delete preset: " + eq.getName(), e);
+                }
+            });
+        }
+
+        Toast.makeText(requireContext(), "Deleted", Toast.LENGTH_SHORT).show();
+        setSelectionMode(false);
+        refreshDrawerList();
+    }
+
+    private void showMoveToFolderDialog() {
+        if (selectedPresetIds.isEmpty()) {
+            Toast.makeText(requireContext(), "No presets selected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (folders.isEmpty()) {
+            Toast.makeText(requireContext(), "No folders yet - create one first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String[] names = new String[folders.size()];
+        for (int i = 0; i < folders.size(); i++) {
+            names[i] = folders.get(i).getName();
+        }
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Move to folder")
+                .setItems(names, (dialog, which) -> moveSelectedPresetsToFolder(folders.get(which)))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void moveSelectedPresetsToFolder(Folder folder) {
+        if (dataHandler == null) return;
+
+        for (SelectedEqualizer eq : presets) {
+            if (!selectedPresetIds.contains(eq.getId())) continue;
+
+            eq.setFolderId(folder.getId());
+            dataHandler.updateFolderAssignment(eq.getId(), folder.getId(), new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() {}
+                @Override public void onFailure(Exception e) {
+                    Log.e("MOVE_PRESET", "Failed to move preset: " + eq.getName(), e);
+                }
+            });
+        }
+
+        Toast.makeText(requireContext(), "Moved to \"" + folder.getName() + "\"", Toast.LENGTH_SHORT).show();
+        setSelectionMode(false);
+        refreshDrawerList();
     }
 
     private void applySelectedPreset(SelectedEqualizer eq) {
@@ -736,94 +980,6 @@ public class EqualizerEditorFragment extends Fragment {
             }
         }
         return false;
-    }
-
-    /**
-     * Renders the drawer: every folder, with that folder's presets inserted
-     * indented directly below it if it's the currently expanded one, followed
-     * by top-level presets (not in any folder).
-     */
-    private void updateDrawerMenu() {
-        android.view.Menu menu = navView.getMenu();
-        menu.clear(); // Safe clean clearing operation execution path
-        menuItemTargets.clear();
-
-        int groupId = 2;
-        menu.setGroupCheckable(groupId, false, false);
-
-        for (Folder folder : folders) {
-            int folderMenuId = stableMenuItemId(folder.getId());
-            menu.add(groupId, folderMenuId, android.view.Menu.NONE, folder.getName())
-                    .setIcon(android.R.drawable.ic_menu_agenda);
-
-            menuItemTargets.put(folderMenuId, folder);
-
-            if (!folder.getId().equals(expandedFolderId)) continue;
-
-            for (SelectedEqualizer eq : presets) {
-                if (!folder.getId().equals(eq.getFolderId())) continue;
-
-                int presetMenuId = stableMenuItemId(eq.getId());
-                android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, "     " + eq.getDisplayName())
-                        .setIcon(android.R.drawable.ic_media_next);
-
-                item.setActionView(R.layout.menu_delete_action);
-                View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
-                deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
-
-                menuItemTargets.put(presetMenuId, eq);
-            }
-        }
-
-        for (SelectedEqualizer eq : presets) {
-            if (eq.getFolderId() != null) continue;
-
-            int presetMenuId = stableMenuItemId(eq.getId());
-            android.view.MenuItem item = menu.add(groupId, presetMenuId, android.view.Menu.NONE, eq.getDisplayName())
-                    .setIcon(android.R.drawable.ic_media_next);
-
-            item.setActionView(R.layout.menu_delete_action);
-
-            View actionView = item.getActionView();
-            View deleteBtn = actionView.findViewById(R.id.btn_delete_preset);
-
-            deleteBtn.setOnClickListener(v -> {
-                DrawerLayout drawer = getView().findViewById(R.id.eq_drawer);
-                if(drawer != null) drawer.closeDrawer(GravityCompat.START);
-
-                showDeleteConfirmationDialog(eq);
-            });
-
-            menuItemTargets.put(presetMenuId, eq);
-        }
-    }
-
-    private void showDeleteConfirmationDialog(SelectedEqualizer eq) {
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Delete Preset")
-                .setMessage("Are you sure you want to delete '" + eq.getDisplayName() + "'?")
-                .setPositiveButton("Delete", (dialog, which) -> {
-                    deletePreset(eq);
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void deletePreset(SelectedEqualizer eq) {
-        if (dataHandler != null) {
-            dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
-                @Override
-                public void onSuccess() {
-                    // No need to manually refresh; listenToPresets will trigger automatically
-                    Toast.makeText(getContext(), "Deleted successfully", Toast.LENGTH_SHORT).show();
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    Toast.makeText(getContext(), "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
     }
 
     private void initSystemEqualizer(int audioSessionId) {

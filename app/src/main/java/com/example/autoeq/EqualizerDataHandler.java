@@ -85,6 +85,31 @@ public class EqualizerDataHandler {
                 });
     }
 
+    /**
+     * Moves a preset to a different folder (or removes it from any folder if
+     * folderId is null) via a partial update to just that field, rather than
+     * rewriting the whole preset object.
+     */
+    public void updateFolderAssignment(String presetId, String folderId, OperationCallback callback) {
+        if (presetId == null) {
+            if (callback != null) callback.onFailure(new IllegalArgumentException("Missing preset id"));
+            return;
+        }
+
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        userDbRef.child(presetId).child("folderId").setValue(folderId)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
     public void saveEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
         if (equalizer == null || equalizer.getName() == null) {
             if (callback != null) callback.onFailure(new IllegalArgumentException("Equalizer data empty"));
