@@ -12,6 +12,9 @@ public class SelectedEqualizer {
     private List<Integer> bandIds;
     private List<Integer> bandLevels;
     private String folderId; // null = top-level, not in any folder
+    private String linkedPresetId; // null = this preset owns its own bandLevels;
+    // otherwise it's a UI-only duplicate whose real
+    // data lives on the preset with this id
 
     public SelectedEqualizer() {}
 
@@ -85,5 +88,13 @@ public class SelectedEqualizer {
 
     public void setFolderId(String folderId) {
         this.folderId = folderId;
+    }
+
+    public String getLinkedPresetId() {
+        return linkedPresetId;
+    }
+
+    public void setLinkedPresetId(String linkedPresetId) {
+        this.linkedPresetId = linkedPresetId;
     }
 }

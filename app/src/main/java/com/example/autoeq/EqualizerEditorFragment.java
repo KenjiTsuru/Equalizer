@@ -571,8 +571,10 @@ public class EqualizerEditorFragment extends Fragment {
         currentEq = eq;
         updateCurrentEqDisplay();
 
-        if (systemEq != null && currentEq != null) {
-            List<Integer> levels = currentEq.getBandLevels();
+        SelectedEqualizer dataSource = resolveDataSource(eq);
+
+        if (systemEq != null && dataSource != null) {
+            List<Integer> levels = dataSource.getBandLevels();
 
             // levels can come back null or shorter than NUM_BANDS - a preset saved
             // before this fix, a Firebase read that hasn't fully resolved yet, or
@@ -587,11 +589,30 @@ public class EqualizerEditorFragment extends Fragment {
                 systemEq.setPreEqBandAllChannelsTo(i,
                         new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[i], levelToGainDb(level)));
             }
-            currentEq.setBandLevels(safeLevels);
+            dataSource.setBandLevels(safeLevels);
+            if (dataSource != currentEq) {
+                currentEq.setBandLevels(safeLevels);
+            }
 
             // Redraw layout tracks to fit the loaded properties
             buildBandUiFromSystemEqualizer();
         }
+    }
+
+    /**
+     * Follows linkedPresetId to find the preset that actually owns the
+     * bandLevels for eq. A preset with no link owns its own data and
+     * resolves to itself. Falls back to eq itself if the link target can't
+     * be found (e.g. the original was deleted), rather than showing nothing.
+     */
+    private SelectedEqualizer resolveDataSource(SelectedEqualizer eq) {
+        if (eq == null || eq.getLinkedPresetId() == null) return eq;
+        for (SelectedEqualizer candidate : presets) {
+            if (eq.getLinkedPresetId().equals(candidate.getId())) {
+                return candidate;
+            }
+        }
+        return eq;
     }
 
     /**
@@ -620,9 +641,9 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /**
-     * Same matching rule as isDuplicatePreset uses when creating a preset
+     * Same matching rule findMatchingPreset uses when creating a preset
      * (case-insensitive, trimmed name+artist, song-type only) - so "this
-     * would be flagged as a duplicate" and "this matches what's playing" stay
+     * matches an existing preset" and "this matches what's playing" stay
      * consistent with each other.
      */
     private SelectedEqualizer findPresetForTrack(String songName, String artistName) {
@@ -725,22 +746,22 @@ public class EqualizerEditorFragment extends Fragment {
 
                     int type = typeSpinner.getSelectedItemPosition();
 
-                    if (isDuplicatePreset(name, artist, type, presets)) {
-                        Toast.makeText(requireContext(), "A preset for \"" + name + "\" already exists", Toast.LENGTH_LONG).show();
-                        return;
-                    }
+                    SelectedEqualizer existingMatch = findMatchingPreset(name, artist, type, presets);
 
                     // Build modern dynamic generic collection arrays explicitly
                     List<Integer> bandIds = new ArrayList<>();
-                    List<Integer> initialLevels = new ArrayList<>();
-
                     for (int i = 0; i < NUM_BANDS; i++) {
                         bandIds.add(i);
-                        initialLevels.add(0);
                     }
+                    List<Integer> initialLevels = existingMatch != null
+                            ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
+                            : zeroLevels();
 
                     SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
                     eq.setFolderId(expandedFolderId);
+                    if (existingMatch != null) {
+                        eq.setLinkedPresetId(existingMatch.getId());
+                    }
 
                     // Initialize data handler on the fly if it hasn't been instantiated yet
                     if (dataHandler == null) {
@@ -926,26 +947,31 @@ public class EqualizerEditorFragment extends Fragment {
 
     private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
         int created = 0;
-        int skippedDuplicates = 0;
+        int linked = 0;
         // Tracks already queued this same import count as "existing" too, so
-        // a playlist with the same song listed twice doesn't create two presets.
+        // a playlist with the same song listed twice links the second one to
+        // the first instead of creating two independent presets.
         List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
 
         for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
-            if (isDuplicatePreset(track.name, track.artist, 0, combinedExisting)) {
-                skippedDuplicates++;
-                continue;
-            }
+            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
 
             List<Integer> bandIds = new ArrayList<>();
-            List<Integer> initialLevels = new ArrayList<>();
             for (int i = 0; i < NUM_BANDS; i++) {
                 bandIds.add(i);
-                initialLevels.add(0);
             }
+            List<Integer> initialLevels = existingMatch != null
+                    ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
+                    : zeroLevels();
 
             SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, bandIds, initialLevels);
             eq.setFolderId(folder.getId());
+            if (existingMatch != null) {
+                eq.setLinkedPresetId(existingMatch.getId());
+                linked++;
+            } else {
+                created++;
+            }
             combinedExisting.add(eq);
 
             dataHandler.saveEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
@@ -954,32 +980,54 @@ public class EqualizerEditorFragment extends Fragment {
                     Log.e("PLAYLIST_IMPORT", "Failed to save imported preset: " + track.name, e);
                 }
             });
-            created++;
         }
 
         Toast.makeText(requireContext(),
-                "Imported " + created + " song" + (created == 1 ? "" : "s")
-                        + (skippedDuplicates > 0 ? " (" + skippedDuplicates + " already existed)" : "")
+                "Imported " + (created + linked) + " song" + (created + linked == 1 ? "" : "s")
+                        + (linked > 0 ? " (" + linked + " linked to existing presets)" : "")
                         + " into \"" + folder.getName() + "\"",
                 Toast.LENGTH_LONG).show();
     }
 
-    /** Same song+artist (case-insensitive) for type 0, or same name for type 1 (genre). */
-    private boolean isDuplicatePreset(String name, String artist, int type, List<SelectedEqualizer> existing) {
+    /**
+     * Same song+artist (case-insensitive) for type 0, or same name for type 1
+     * (genre). Returns the matching preset - always the one that actually
+     * owns its data, never another duplicate - or null if there's no match.
+     */
+    private SelectedEqualizer findMatchingPreset(String name, String artist, int type, List<SelectedEqualizer> existing) {
         for (SelectedEqualizer eq : existing) {
             if (eq.getType() != type) continue;
             boolean nameMatches = eq.getName() != null && eq.getName().equalsIgnoreCase(name);
             if (!nameMatches) continue;
 
+            boolean matches;
             if (type == 0) {
                 String existingArtist = eq.getArtist() == null ? "" : eq.getArtist();
                 String newArtist = artist == null ? "" : artist;
-                if (existingArtist.equalsIgnoreCase(newArtist)) return true;
+                matches = existingArtist.equalsIgnoreCase(newArtist);
             } else {
-                return true;
+                matches = true;
+            }
+
+            if (matches) {
+                // Point new duplicates directly at the real data owner rather
+                // than chaining through another duplicate.
+                return resolveDataSource(eq);
             }
         }
-        return false;
+        return null;
+    }
+
+    private static List<Integer> zeroLevels() {
+        List<Integer> levels = new ArrayList<>(NUM_BANDS);
+        for (int i = 0; i < NUM_BANDS; i++) {
+            levels.add(0);
+        }
+        return levels;
+    }
+
+    private static List<Integer> nonNullLevels(List<Integer> levels) {
+        return levels != null ? levels : zeroLevels();
     }
 
     private void initSystemEqualizer(int audioSessionId) {
@@ -1132,9 +1180,14 @@ public class EqualizerEditorFragment extends Fragment {
             float gainDb = systemEq.getPreEqBandByChannelIndex(0, i).getGain();
             freshLevels.add(gainDbToLevel(gainDb));
         }
-        currentEq.setBandLevels(freshLevels);
 
-        String presetId = currentEq.getId();
+        SelectedEqualizer dataSource = resolveDataSource(currentEq);
+        dataSource.setBandLevels(freshLevels);
+        if (dataSource != currentEq) {
+            currentEq.setBandLevels(freshLevels);
+        }
+
+        String presetId = dataSource.getId();
         dataHandler.updateBandLevels(presetId, freshLevels, new EqualizerDataHandler.OperationCallback() {
             @Override
             public void onSuccess() {
