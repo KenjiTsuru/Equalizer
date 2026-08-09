@@ -19,7 +19,7 @@
                 <corners android:radius="10dp" />
                 <gradient
                     android:startColor="#F3E8FF"
-                    android:endColor="#A855F7"
+                    android:endColor="#710193"
                     android:type="linear"
                     android:angle="0" />
                 <!-- Note: Angle 0 is Left-to-Right.
