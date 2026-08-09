@@ -10,7 +10,7 @@
         style="@style/Widget.Material3.Button.Icon"
         android:layout_width="24dp"
         android:layout_height="24dp"
-        android:backgroundTint="#800080"
+        android:backgroundTint="@color/purple"
         android:insetLeft="0dp"
         android:insetTop="0dp"
         android:insetRight="0dp"
