@@ -59,44 +59,11 @@ public class EqualizerDataHandler {
     }
 
     /**
-     * Updates an existing equalizer preset in Firebase.
-     * This is used when moving seekbars/sliders.
-     */
-    public void updateEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
-        if (equalizer == null || equalizer.getId() == null) {
-            if (callback != null) callback.onFailure(new Exception("Cannot update: ID is missing"));
-            return;
-        }
-
-        if (userDbRef == null) {
-            if (callback != null) callback.onFailure(new Exception("Database reference missing"));
-            return;
-        }
-
-        if (equalizer.getBandLevels() == null || equalizer.getBandLevels().isEmpty()) {
-            // setValue() below replaces the WHOLE node. Refusing to write here is
-            // what stops a preset that hasn't fully loaded from having its saved
-            // bandLevels wiped out by a save that happens to fire on it.
-            if (callback != null) callback.onFailure(new IllegalStateException("Refusing to save preset with missing band levels"));
-            return;
-        }
-
-        // Target the specific ID of the preset and overwrite it with the new levels
-        userDbRef.child(equalizer.getId()).setValue(equalizer)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
-    }
-
-    /**
-     * Saves only the bandLevels field for a preset via a partial update instead
-     * of overwriting the whole preset object. This is what onStopTrackingTouch
-     * calls now: cheaper than updateEqualizer() for the common "user moved a
-     * seekbar" case, and it structurally can't touch name/artist/id even if the
-     * in-memory object were ever stale.
+     * Saves only the bandLevels field for a preset via a partial update
+     * instead of overwriting the whole preset object. This is what
+     * onStopTrackingTouch calls: cheaper than a full-object write for the
+     * common "user moved a seekbar" case, and it structurally can't touch
+     * name/artist/id even if the in-memory object were ever stale.
      */
     public void updateBandLevels(String presetId, List<Integer> bandLevels, OperationCallback callback) {
         if (presetId == null || bandLevels == null || bandLevels.isEmpty()) {

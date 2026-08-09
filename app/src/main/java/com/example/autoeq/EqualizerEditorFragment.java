@@ -3,8 +3,6 @@ package com.example.autoeq;
 import android.app.AlertDialog;
 import android.media.audiofx.DynamicsProcessing;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.SwitchCompat;
@@ -76,13 +74,6 @@ public class EqualizerEditorFragment extends Fragment {
     private MaterialToolbar toolbar;
     private TextView presetNameText;
     private TextView sharedTooltip;
-
-    // Debounced save: onProgressChanged is the confirmed-firing callback, so
-    // it's what actually schedules the Firebase write. Every progress change
-    // resets this timer; the write only goes out once movement pauses.
-    private final Handler saveHandler = new Handler(Looper.getMainLooper());
-    private final Runnable pendingBandLevelSave = this::persistCurrentBandLevels;
-    private static final long BAND_LEVEL_SAVE_DEBOUNCE_MS = 400;
 
     public EqualizerEditorFragment() {}
 
@@ -703,21 +694,8 @@ public class EqualizerEditorFragment extends Fragment {
 
         for (Folder folder : folders) {
             int folderMenuId = stableMenuItemId(folder.getId());
-            android.view.MenuItem folderItem = menu.add(groupId, folderMenuId, android.view.Menu.NONE, folder.getName())
+            menu.add(groupId, folderMenuId, android.view.Menu.NONE, folder.getName())
                     .setIcon(android.R.drawable.ic_menu_agenda);
-
-            // Give folder items the same action-view structure every other
-            // item has, just with the delete button hidden - not wiring up
-            // folder deletion yet (still an open question what happens to the
-            // presets inside), but keeping every row structurally identical
-            // avoids relying on NavigationView's item recycling handling a
-            // mix of "has an action view" / "doesn't" correctly.
-            folderItem.setActionView(R.layout.menu_delete_action);
-            View folderActionView = folderItem.getActionView();
-            if (folderActionView != null) {
-                View folderDeleteBtn = folderActionView.findViewById(R.id.btn_delete_preset);
-                if (folderDeleteBtn != null) folderDeleteBtn.setVisibility(View.INVISIBLE);
-            }
 
             menuItemTargets.put(folderMenuId, folder);
 
@@ -880,11 +858,6 @@ public class EqualizerEditorFragment extends Fragment {
                     if (sharedTooltip != null) {
                         sharedTooltip.setText(formatLevelAsDb(targetLevel));
                     }
-
-                    if (currentEq != null && dataHandler != null) {
-                        saveHandler.removeCallbacks(pendingBandLevelSave);
-                        saveHandler.postDelayed(pendingBandLevelSave, BAND_LEVEL_SAVE_DEBOUNCE_MS);
-                    }
                 }
                 @Override public void onStartTrackingTouch(SeekBar seekBar) {
                     if (sharedTooltip != null) {
@@ -894,9 +867,6 @@ public class EqualizerEditorFragment extends Fragment {
                     }
                 }
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {
-                    // If this DOES fire, save immediately instead of waiting out
-                    // the debounce timer scheduled above.
-                    saveHandler.removeCallbacks(pendingBandLevelSave);
                     persistCurrentBandLevels();
 
                     if (sharedTooltip != null) {
@@ -985,7 +955,6 @@ public class EqualizerEditorFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        saveHandler.removeCallbacks(pendingBandLevelSave);
         if (dataHandler != null) {
             dataHandler.stopListening();
         }
