@@ -11,6 +11,7 @@ public class SelectedEqualizer {
     private int type; // 0 for Song and Artist, 1 for Genre
     private List<Integer> bandIds;
     private List<Integer> bandLevels;
+    private String folderId; // null = top-level, not in any folder
 
     public SelectedEqualizer() {}
 
@@ -76,5 +77,13 @@ public class SelectedEqualizer {
             return name + " - " + artist;
         }
         return name;
+    }
+
+    public String getFolderId() {
+        return folderId;
+    }
+
+    public void setFolderId(String folderId) {
+        this.folderId = folderId;
     }
 }

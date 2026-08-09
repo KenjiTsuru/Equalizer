@@ -29,8 +29,10 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class EqualizerEditorFragment extends Fragment {
 
@@ -57,11 +59,25 @@ public class EqualizerEditorFragment extends Fragment {
     // Firebase Data Handler reference replaces local indexing pools
     private EqualizerDataHandler dataHandler;
     private List<SelectedEqualizer> presets = new ArrayList<>();
+    private List<Folder> folders = new ArrayList<>();
+
+    // Drawer navigation state: null means showing the root (folders + top
+    // level presets); otherwise this is the id of the folder currently open.
+    private String currentFolderId = null;
+    // Maps a rendered drawer menu item's id back to what it represents -
+    // a Folder, a SelectedEqualizer, or the BACK_TARGET sentinel - since
+    // NavigationView's Menu only gives us the clicked item's id/title, not
+    // an arbitrary object.
+    private final Map<Integer, Object> menuItemTargets = new HashMap<>();
+    private static final Object BACK_TARGET = new Object();
+
+    private SpotifyWebApiClient spotifyWebApiClient;
 
     private View emptyStateText;
     private View eqUiContainer;
     private MaterialToolbar toolbar;
     private TextView presetNameText;
+    private TextView sharedTooltip;
 
     // Debounced save: onProgressChanged is the confirmed-firing callback, so
     // it's what actually schedules the Firebase write. Every progress change
@@ -86,6 +102,7 @@ public class EqualizerEditorFragment extends Fragment {
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
         bandsContainer = view.findViewById(R.id.eq_bands_row);
         presetNameText = view.findViewById(R.id.eq_preset_name);
+        sharedTooltip = view.findViewById(R.id.eq_shared_tooltip);
 
         toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
         toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
@@ -110,22 +127,32 @@ public class EqualizerEditorFragment extends Fragment {
         if (btnCreate != null) {
             btnCreate.setOnClickListener(v -> {
                 drawerLayout.closeDrawer(GravityCompat.START);
-                showCreateEqualizerDialog();
+                showCreateChooserDialog();
             });
         }
 
         dataHandler = new EqualizerDataHandler();
 
-        // Handle navigation items by dynamic string matching instead of hardcoded menu IDs
+        // Handle navigation items by looking up what the tapped item represents
+        // (folder / preset / back) instead of matching on title text, since
+        // folder and preset names could otherwise collide.
         navView.setNavigationItemSelectedListener(item -> {
-            String selectedName = item.getTitle().toString();
-            for (SelectedEqualizer eq : presets) {
-                if (eq.getDisplayName().equals(selectedName)) {
-                    applySelectedPreset(eq);
-                    drawerLayout.closeDrawer(GravityCompat.START);
-                    return true;
-                }
+            Object target = menuItemTargets.get(item.getItemId());
+
+            if (target instanceof SelectedEqualizer) {
+                applySelectedPreset((SelectedEqualizer) target);
+                drawerLayout.closeDrawer(GravityCompat.START);
+                return true;
+            } else if (target instanceof Folder) {
+                currentFolderId = ((Folder) target).getId();
+                updateDrawerMenu();
+                return true;
+            } else if (target == BACK_TARGET) {
+                currentFolderId = null;
+                updateDrawerMenu();
+                return true;
             }
+
             drawerLayout.closeDrawer(GravityCompat.START);
             return false;
         });
@@ -231,11 +258,39 @@ public class EqualizerEditorFragment extends Fragment {
                 }
             }
         });
+
+        dataHandler.listenToFolders(new EqualizerDataHandler.FoldersListener() {
+            @Override
+            public void onFoldersLoaded(List<Folder> updatedFolders) {
+                if (!isAdded()) return;
+                folders = updatedFolders;
+
+                String currentQuery = searchBar != null ? searchBar.getText().toString() : "";
+                if (currentQuery.isEmpty()) {
+                    updateDrawerMenu();
+                }
+                // Folders never show up in search results, so no refresh needed there.
+            }
+
+            @Override
+            public void onError(Exception e) {
+                if (!isAdded()) return;
+                if (com.google.firebase.auth.FirebaseAuth.getInstance().getCurrentUser() != null) {
+                    Toast.makeText(getContext(), "Folder Database Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
+    /**
+     * Renders the search-filtered view: presets only, matched by name/artist,
+     * searched across ALL presets regardless of folder or which folder is
+     * currently open. Folders themselves are never matched or shown here.
+     */
     private void filterDrawerMenu(String query) {
         android.view.Menu menu = navView.getMenu();
-        menu.clear(); // Clear current items
+        menu.clear();
+        menuItemTargets.clear();
 
         int groupId = 2;
         int dynamicId = 2000;
@@ -243,12 +298,15 @@ public class EqualizerEditorFragment extends Fragment {
         for (SelectedEqualizer eq : presets) {
             // Only add items that match the search query (case-insensitive)
             if (eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) {
-                android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+                android.view.MenuItem item = menu.add(groupId, dynamicId, android.view.Menu.NONE, eq.getDisplayName())
                         .setIcon(android.R.drawable.ic_media_next);
 
                 item.setActionView(R.layout.menu_delete_action);
                 View deleteBtn = item.getActionView().findViewById(R.id.btn_delete_preset);
                 deleteBtn.setOnClickListener(v -> showDeleteConfirmationDialog(eq));
+
+                menuItemTargets.put(dynamicId, eq);
+                dynamicId++;
             }
         }
     }
@@ -262,10 +320,10 @@ public class EqualizerEditorFragment extends Fragment {
 
             // levels can come back null or shorter than NUM_BANDS - a preset saved
             // before this fix, a Firebase read that hasn't fully resolved yet, or
-            // (now) an old 5-band preset from before the 12-band migration. Always
-            // fully resync every band instead of skipping, defaulting anything
-            // missing to 0 dB, and write the result back onto currentEq so the
-            // in-memory model is never null/short going forward.
+            // an old preset from before the 12-band migration. Always fully
+            // resync every band instead of skipping, defaulting anything missing
+            // to 0 dB, and write the result back onto currentEq so the in-memory
+            // model is never null/short going forward.
             List<Integer> safeLevels = new ArrayList<>(NUM_BANDS);
             for (int i = 0; i < NUM_BANDS; i++) {
                 int level = (levels != null && i < levels.size() && levels.get(i) != null) ? levels.get(i) : 0;
@@ -292,6 +350,20 @@ public class EqualizerEditorFragment extends Fragment {
         if (systemEq != null && bandsContainer.getChildCount() == 0) {
             buildBandUiFromSystemEqualizer();
         }
+    }
+
+    /** The "+" button: choose what to add. */
+    private void showCreateChooserDialog() {
+        String[] options = {"New Preset", "New Folder", "Import Playlist"};
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Add New")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) showCreateEqualizerDialog();
+                    else if (which == 1) showCreateFolderDialog();
+                    else showImportPlaylistDialog();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void showCreateEqualizerDialog() {
@@ -339,6 +411,11 @@ public class EqualizerEditorFragment extends Fragment {
 
                     int type = typeSpinner.getSelectedItemPosition();
 
+                    if (isDuplicatePreset(name, artist, type, presets)) {
+                        Toast.makeText(requireContext(), "A preset for \"" + name + "\" already exists", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+
                     // Build modern dynamic generic collection arrays explicitly
                     List<Integer> bandIds = new ArrayList<>();
                     List<Integer> initialLevels = new ArrayList<>();
@@ -349,6 +426,7 @@ public class EqualizerEditorFragment extends Fragment {
                     }
 
                     SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
+                    eq.setFolderId(currentFolderId);
 
                     // Initialize data handler on the fly if it hasn't been instantiated yet
                     if (dataHandler == null) {
@@ -379,15 +457,248 @@ public class EqualizerEditorFragment extends Fragment {
                 .show();
     }
 
+    private void showCreateFolderDialog() {
+        final EditText folderNameInput = new EditText(requireContext());
+        folderNameInput.setHint("Folder Name");
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Create Folder")
+                .setView(folderNameInput)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Create", (dialog, which) -> {
+                    String name = folderNameInput.getText().toString().trim();
+                    if (name.isEmpty()) name = "Untitled Folder";
+
+                    Folder folder = new Folder(name, null);
+
+                    if (dataHandler == null) {
+                        dataHandler = new EqualizerDataHandler();
+                    }
+
+                    dataHandler.saveFolder(folder, new EqualizerDataHandler.OperationCallback() {
+                        @Override
+                        public void onSuccess() {
+                            if (isAdded() && getActivity() != null) {
+                                getActivity().runOnUiThread(() ->
+                                        Toast.makeText(requireContext(), "Folder created: " + folder.getName(), Toast.LENGTH_SHORT).show());
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Exception e) {
+                            if (isAdded() && getActivity() != null) {
+                                getActivity().runOnUiThread(() ->
+                                        Toast.makeText(requireContext(), "Folder Create Error: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                            }
+                        }
+                    });
+                })
+                .show();
+    }
+
+    private void showImportPlaylistDialog() {
+        if (!(requireActivity() instanceof MainActivity)) {
+            Toast.makeText(requireContext(), "Can't import playlists from this screen", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        MainActivity activity = (MainActivity) requireActivity();
+
+        if (spotifyWebApiClient == null) {
+            spotifyWebApiClient = new SpotifyWebApiClient();
+        }
+
+        Toast.makeText(requireContext(), "Connecting to Spotify...", Toast.LENGTH_SHORT).show();
+
+        activity.requestSpotifyWebApiToken(new MainActivity.SpotifyTokenCallback() {
+            @Override
+            public void onTokenReady(String accessToken) {
+                spotifyWebApiClient.fetchUserPlaylists(accessToken, new SpotifyWebApiClient.PlaylistsCallback() {
+                    @Override
+                    public void onSuccess(List<SpotifyWebApiClient.SpotifyPlaylist> spotifyPlaylists) {
+                        if (!isAdded() || getActivity() == null) return;
+                        getActivity().runOnUiThread(() -> showPlaylistPickerDialog(accessToken, spotifyPlaylists));
+                    }
+
+                    @Override
+                    public void onFailure(Exception e) {
+                        if (!isAdded() || getActivity() == null) return;
+                        getActivity().runOnUiThread(() ->
+                                Toast.makeText(requireContext(), "Could not load playlists: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                    }
+                });
+            }
+
+            @Override
+            public void onTokenError(String message) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(), "Spotify login failed: " + message, Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void showPlaylistPickerDialog(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> spotifyPlaylists) {
+        if (spotifyPlaylists.isEmpty()) {
+            Toast.makeText(requireContext(), "No playlists found on this Spotify account", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String[] names = new String[spotifyPlaylists.size()];
+        for (int i = 0; i < spotifyPlaylists.size(); i++) {
+            names[i] = spotifyPlaylists.get(i).name;
+        }
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Choose a playlist")
+                .setItems(names, (dialog, which) -> importPlaylist(accessToken, spotifyPlaylists.get(which)))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void importPlaylist(String accessToken, SpotifyWebApiClient.SpotifyPlaylist playlist) {
+        Toast.makeText(requireContext(), "Importing \"" + playlist.name + "\"...", Toast.LENGTH_SHORT).show();
+
+        spotifyWebApiClient.fetchPlaylistTracks(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
+            @Override
+            public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> finishPlaylistImport(playlist, tracks));
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(), "Could not load playlist tracks: " + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+        if (dataHandler == null) {
+            dataHandler = new EqualizerDataHandler();
+        }
+
+        // Reuse an existing folder tied to this exact Spotify playlist rather
+        // than creating a duplicate one on repeat imports.
+        Folder existingFolder = null;
+        for (Folder folder : folders) {
+            if (playlist.id.equals(folder.getSpotifyPlaylistId())) {
+                existingFolder = folder;
+                break;
+            }
+        }
+
+        Folder folder = existingFolder != null ? existingFolder : new Folder(playlist.name, playlist.id);
+        Folder finalFolder = folder;
+
+        dataHandler.saveFolder(folder, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                if (isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() -> importTracksIntoFolder(finalFolder, tracks));
+                }
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                if (isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() ->
+                            Toast.makeText(requireContext(), "Could not save folder: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                }
+            }
+        });
+    }
+
+    private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+        int created = 0;
+        int skippedDuplicates = 0;
+        // Tracks already queued this same import count as "existing" too, so
+        // a playlist with the same song listed twice doesn't create two presets.
+        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+
+        for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
+            if (isDuplicatePreset(track.name, track.artist, 0, combinedExisting)) {
+                skippedDuplicates++;
+                continue;
+            }
+
+            List<Integer> bandIds = new ArrayList<>();
+            List<Integer> initialLevels = new ArrayList<>();
+            for (int i = 0; i < NUM_BANDS; i++) {
+                bandIds.add(i);
+                initialLevels.add(0);
+            }
+
+            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, bandIds, initialLevels);
+            eq.setFolderId(folder.getId());
+            combinedExisting.add(eq);
+
+            dataHandler.saveEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() {}
+                @Override public void onFailure(Exception e) {
+                    Log.e("PLAYLIST_IMPORT", "Failed to save imported preset: " + track.name, e);
+                }
+            });
+            created++;
+        }
+
+        Toast.makeText(requireContext(),
+                "Imported " + created + " song" + (created == 1 ? "" : "s")
+                        + (skippedDuplicates > 0 ? " (" + skippedDuplicates + " already existed)" : "")
+                        + " into \"" + folder.getName() + "\"",
+                Toast.LENGTH_LONG).show();
+    }
+
+    /** Same song+artist (case-insensitive) for type 0, or same name for type 1 (genre). */
+    private boolean isDuplicatePreset(String name, String artist, int type, List<SelectedEqualizer> existing) {
+        for (SelectedEqualizer eq : existing) {
+            if (eq.getType() != type) continue;
+            boolean nameMatches = eq.getName() != null && eq.getName().equalsIgnoreCase(name);
+            if (!nameMatches) continue;
+
+            if (type == 0) {
+                String existingArtist = eq.getArtist() == null ? "" : eq.getArtist();
+                String newArtist = artist == null ? "" : artist;
+                if (existingArtist.equalsIgnoreCase(newArtist)) return true;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Renders the drawer at the root (folders + top-level presets) or, when
+     * currentFolderId is set, a back item followed by just that folder's
+     * presets.
+     */
     private void updateDrawerMenu() {
         android.view.Menu menu = navView.getMenu();
         menu.clear(); // Safe clean clearing operation execution path
+        menuItemTargets.clear();
 
         int groupId = 2;
         int dynamicId = 2000;
 
+        if (currentFolderId != null) {
+            menu.add(groupId, dynamicId, android.view.Menu.NONE, "\u2039 Back");
+            menuItemTargets.put(dynamicId, BACK_TARGET);
+            dynamicId++;
+        } else {
+            for (Folder folder : folders) {
+                menu.add(groupId, dynamicId, android.view.Menu.NONE, "\uD83D\uDCC1 " + folder.getName());
+                menuItemTargets.put(dynamicId, folder);
+                dynamicId++;
+            }
+        }
+
         for (SelectedEqualizer eq : presets) {
-            android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, eq.getDisplayName())
+            String eqFolderId = eq.getFolderId();
+            boolean belongsHere = currentFolderId == null ? eqFolderId == null : currentFolderId.equals(eqFolderId);
+            if (!belongsHere) continue;
+
+            android.view.MenuItem item = menu.add(groupId, dynamicId, android.view.Menu.NONE, eq.getDisplayName())
                     .setIcon(android.R.drawable.ic_media_next);
 
             item.setActionView(R.layout.menu_delete_action);
@@ -401,6 +712,9 @@ public class EqualizerEditorFragment extends Fragment {
 
                 showDeleteConfirmationDialog(eq);
             });
+
+            menuItemTargets.put(dynamicId, eq);
+            dynamicId++;
         }
     }
 
@@ -487,16 +801,11 @@ public class EqualizerEditorFragment extends Fragment {
             bandView.setLayoutParams(params);
 
             VerticalSeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
-            TextView tooltip = bandView.findViewById(R.id.text_bubble);
             TextView label = bandView.findViewById(R.id.eq_band_label);
 
             sb.setMax(SPAN);
             int currentLevel = gainDbToLevel(systemEq.getPreEqBandByChannelIndex(0, finalBand).getGain());
             sb.setProgress(currentLevel - MIN_LEVEL);
-
-            if (tooltip != null) {
-                tooltip.setText(formatLevelAsDb(currentLevel));
-            }
 
             if (label != null) {
                 label.setText(formatFrequencyLabel(BAND_FREQUENCIES_HZ[finalBand]));
@@ -507,7 +816,7 @@ public class EqualizerEditorFragment extends Fragment {
             sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    // Updates the live audio engine + in-memory model + tooltip
+                    // Updates the live audio engine + in-memory model
                     // immediately. The Firebase write is debounced below: every
                     // call here resets a short timer, so the write only fires
                     // once movement pauses. This is the primary save path -
@@ -525,10 +834,8 @@ public class EqualizerEditorFragment extends Fragment {
                         }
                     }
 
-
-                    if (tooltip != null) {
-                        tooltip.setText(formatLevelAsDb(targetLevel));
-                        tooltip.setVisibility(View.VISIBLE);
+                    if (sharedTooltip != null) {
+                        sharedTooltip.setText(formatLevelAsDb(targetLevel));
                     }
 
                     if (currentEq != null && dataHandler != null) {
@@ -536,17 +843,50 @@ public class EqualizerEditorFragment extends Fragment {
                         saveHandler.postDelayed(pendingBandLevelSave, BAND_LEVEL_SAVE_DEBOUNCE_MS);
                     }
                 }
-                @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                @Override public void onStartTrackingTouch(SeekBar seekBar) {
+                    if (sharedTooltip != null) {
+                        sharedTooltip.setText(formatLevelAsDb(MIN_LEVEL + seekBar.getProgress()));
+                        sharedTooltip.setVisibility(View.VISIBLE);
+                        sharedTooltip.post(() -> positionSharedTooltip(bandView));
+                    }
+                }
                 @Override public void onStopTrackingTouch(SeekBar seekBar) {
                     // If this DOES fire, save immediately instead of waiting out
                     // the debounce timer scheduled above.
                     saveHandler.removeCallbacks(pendingBandLevelSave);
                     persistCurrentBandLevels();
+
+                    if (sharedTooltip != null) {
+                        sharedTooltip.setVisibility(View.INVISIBLE);
+                    }
                 }
             });
 
             bandsContainer.addView(bandView);
         }
+    }
+
+    /**
+     * Moves the single shared dB tooltip to sit beside whichever band is
+     * currently being dragged - to the right of it, except for the leftmost
+     * band, which shows it on the left instead. Doesn't track the thumb's
+     * vertical position; it's centered on the band's height once per drag,
+     * since the user's own finger covers the thumb while dragging anyway.
+     */
+    private void positionSharedTooltip(View bandView) {
+        if (sharedTooltip == null || bandsContainer == null) return;
+
+        boolean isLeftmostBand = bandsContainer.indexOfChild(bandView) == 0;
+        float bandLeftInGraph = bandsContainer.getX() + bandView.getX();
+
+        float targetX = isLeftmostBand
+                ? bandLeftInGraph - sharedTooltip.getWidth()
+                : bandLeftInGraph + bandView.getWidth();
+        float targetY = bandsContainer.getY() + bandView.getY()
+                + (bandView.getHeight() - sharedTooltip.getHeight()) / 2f;
+
+        sharedTooltip.setX(targetX);
+        sharedTooltip.setY(targetY);
     }
 
     /**

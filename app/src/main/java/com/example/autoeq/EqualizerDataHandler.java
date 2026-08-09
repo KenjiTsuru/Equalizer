@@ -14,10 +14,17 @@ import java.util.List;
 public class EqualizerDataHandler {
     private static final String TAG = "EqualizerDataHandler";
     private DatabaseReference userDbRef;
+    private DatabaseReference folderDbRef;
     private ValueEventListener presetsListener;
+    private ValueEventListener foldersListener;
 
     public interface PresetsListener {
         void onPresetsLoaded(List<SelectedEqualizer> presets);
+        void onError(Exception e);
+    }
+
+    public interface FoldersListener {
+        void onFoldersLoaded(List<Folder> folders);
         void onError(Exception e);
     }
 
@@ -32,18 +39,21 @@ public class EqualizerDataHandler {
             if (user != null && user.getEmail() != null) {
                 // Sanitize email string safely
                 String sanitizedEmail = user.getEmail().replace(".", "_");
-                this.userDbRef = FirebaseDatabase.getInstance()
+                DatabaseReference userRoot = FirebaseDatabase.getInstance()
                         .getReference("users")
-                        .child(sanitizedEmail)
-                        .child("presets");
+                        .child(sanitizedEmail);
+                this.userDbRef = userRoot.child("presets");
+                this.folderDbRef = userRoot.child("folders");
                 Log.d(TAG, "DataHandler configured safely for user: " + sanitizedEmail);
             } else {
-                // Safe Fallback node to stop NullPointerException crashes
+                // Safe Fallback nodes to stop NullPointerException crashes
                 this.userDbRef = FirebaseDatabase.getInstance().getReference("guest_presets");
+                this.folderDbRef = FirebaseDatabase.getInstance().getReference("guest_folders");
                 Log.w(TAG, "No authenticated user discovered. Pointing to guest fallback node.");
             }
         } catch (Exception e) {
             this.userDbRef = FirebaseDatabase.getInstance().getReference("error_fallback");
+            this.folderDbRef = FirebaseDatabase.getInstance().getReference("error_fallback_folders");
             Log.e(TAG, "Failed initializing Firebase Reference structures", e);
         }
     }
@@ -188,14 +198,104 @@ public class EqualizerDataHandler {
     }
 
     /**
-     * Detaches the presets listener. Call this from the Fragment/Activity's
-     * onDestroyView (or equivalent) so Firebase stops calling back into a
-     * destroyed UI and this handler doesn't keep it alive indefinitely.
+     * Creates a new folder, or updates an existing one if folder.getId() is
+     * already set (used when re-importing a playlist that already has a
+     * folder here, so re-import doesn't create a duplicate folder).
+     */
+    public void saveFolder(Folder folder, OperationCallback callback) {
+        if (folder == null || folder.getName() == null) {
+            if (callback != null) callback.onFailure(new IllegalArgumentException("Folder name is empty"));
+            return;
+        }
+
+        if (folderDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        String folderId = folder.getId();
+        if (folderId == null) {
+            folderId = folderDbRef.push().getKey();
+            if (folderId == null) {
+                if (callback != null) callback.onFailure(new IllegalStateException("Could not generate a folder ID"));
+                return;
+            }
+            folder.setId(folderId);
+        }
+
+        folderDbRef.child(folderId).setValue(folder)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
+    public void deleteFolder(Folder folder, OperationCallback callback) {
+        if (folder == null || folder.getId() == null) {
+            if (callback != null) callback.onFailure(new IllegalArgumentException("Invalid Folder ID"));
+            return;
+        }
+
+        if (folderDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        folderDbRef.child(folder.getId()).removeValue()
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
+    public void listenToFolders(FoldersListener listener) {
+        if (folderDbRef == null) return;
+
+        foldersListener = new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot snapshot) {
+                List<Folder> folderList = new ArrayList<>();
+                for (DataSnapshot postSnapshot : snapshot.getChildren()) {
+                    try {
+                        Folder folder = postSnapshot.getValue(Folder.class);
+                        if (folder != null) {
+                            folder.setId(postSnapshot.getKey());
+                            folderList.add(folder);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error parsing folder entry", e);
+                    }
+                }
+                listener.onFoldersLoaded(folderList);
+            }
+
+            @Override
+            public void onCancelled(DatabaseError error) {
+                listener.onError(error.toException());
+            }
+        };
+
+        folderDbRef.addValueEventListener(foldersListener);
+    }
+
+    /**
+     * Detaches the presets and folders listeners. Call this from the
+     * Fragment/Activity's onDestroyView (or equivalent) so Firebase stops
+     * calling back into a destroyed UI and this handler doesn't keep it
+     * alive indefinitely.
      */
     public void stopListening() {
         if (userDbRef != null && presetsListener != null) {
             userDbRef.removeEventListener(presetsListener);
             presetsListener = null;
+        }
+        if (folderDbRef != null && foldersListener != null) {
+            folderDbRef.removeEventListener(foldersListener);
+            foldersListener = null;
         }
     }
 }

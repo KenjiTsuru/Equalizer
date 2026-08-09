@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -32,6 +33,30 @@
         <activity
             android:name=".PasswordResetActivity"
             android:exported="false" />
+
+        <!-- Spotify Auth SDK's own login screen - required so
+             AuthorizationClient.openLoginActivity() has something to launch.
+             This is Spotify's class - unrelated to your own .LoginActivity above. -->
+        <activity
+            android:name="com.spotify.sdk.android.auth.LoginActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false" />
+
+        <!-- Spotify Auth SDK's redirect catcher - this is the activity that
+             actually needs the redirect-URI intent-filter, not MainActivity. -->
+        <activity
+            android:name="com.spotify.sdk.android.auth.browser.RedirectUriReceiverActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.example.autoeq"
+                    android:host="spotify-callback" />
+            </intent-filter>
+        </activity>
     </application>
 
     <queries>
