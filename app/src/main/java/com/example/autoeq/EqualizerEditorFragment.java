@@ -41,15 +41,45 @@ public class EqualizerEditorFragment extends Fragment {
     // SelectedEqualizer's List<Integer> and the SeekBar's integer progress
     // don't need to change shape just because DynamicsProcessing's native
     // unit is a float dB rather than the old Equalizer's millibel short.
-    private static final int NUM_BANDS = 12;
-    private static final float[] BAND_FREQUENCIES_HZ = {
-            30f, 50f, 83f, 138f, 229f, 380f, 632f, 1050f, 1744f, 2900f, 4800f, 8000f
-    };
     private static final float MIN_GAIN_DB = -12f;
     private static final float MAX_GAIN_DB = 12f;
     private static final int MIN_LEVEL = Math.round(MIN_GAIN_DB * 10);
     private static final int MAX_LEVEL = Math.round(MAX_GAIN_DB * 10);
     private static final int SPAN = MAX_LEVEL - MIN_LEVEL;
+
+    // Owned by SpotifyMonitorService, not this Fragment - both systemEq and
+    // spotifyService.getSystemEq() are the same object once bound. See
+    // onServiceConnected below for why ownership moved out of the Fragment.
+    private SpotifyMonitorService spotifyService;
+    private boolean serviceBound = false;
+    private final android.content.ServiceConnection serviceConnection = new android.content.ServiceConnection() {
+        @Override
+        public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
+            spotifyService = ((SpotifyMonitorService.LocalBinder) binder).getService();
+            serviceBound = true;
+            systemEq = spotifyService.getSystemEq();
+            if (powerSwitch != null) {
+                powerSwitch.setEnabled(systemEq != null);
+                if (systemEq != null) powerSwitch.setChecked(systemEq.getEnabled());
+            }
+            spotifyService.setStateListener(() -> {
+                if (!isAdded()) return;
+                requireActivity().runOnUiThread(EqualizerEditorFragment.this::onServiceStateChanged);
+            });
+            if (currentEq == null && spotifyService.getCurrentEq() != null) {
+                onServiceStateChanged();
+            }
+            if (eqUiContainer != null && eqUiContainer.getVisibility() == View.VISIBLE) {
+                buildBandUiFromSystemEqualizer();
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(android.content.ComponentName name) {
+            serviceBound = false;
+            spotifyService = null;
+        }
+    };
 
     private DynamicsProcessing systemEq;
     private SelectedEqualizer currentEq;
@@ -156,13 +186,14 @@ public class EqualizerEditorFragment extends Fragment {
         // buildDrawerRowView) via a full-width custom view, so there's
         // nothing left for NavigationView's own item-selected dispatch to do.
 
-        initSystemEqualizer(0);
+        bindToSpotifyService();
 
         // Global on/off for the system equalizer effect - not tied to any preset.
+        // Actual enabled/checked state gets synced once the service binding
+        // completes (see serviceConnection above) - systemEq is null until then.
         powerSwitch = view.findViewById(R.id.eq_power_switch);
         if (powerSwitch != null) {
-            powerSwitch.setEnabled(systemEq != null);
-            powerSwitch.setChecked(systemEq != null && systemEq.getEnabled());
+            powerSwitch.setEnabled(false);
             powerSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 if (systemEq != null) {
                     systemEq.setEnabled(isChecked);
@@ -572,29 +603,35 @@ public class EqualizerEditorFragment extends Fragment {
         updateCurrentEqDisplay();
 
         SelectedEqualizer dataSource = resolveDataSource(eq);
-
-        if (systemEq != null && dataSource != null) {
-            List<Integer> levels = dataSource.getBandLevels();
-
-            // levels can come back null or shorter than NUM_BANDS - a preset saved
-            // before this fix, a Firebase read that hasn't fully resolved yet, or
-            // an old preset from before the 12-band migration. Always fully
-            // resync every band instead of skipping, defaulting anything missing
-            // to 0 dB, and write the result back onto currentEq so the in-memory
-            // model is never null/short going forward.
-            List<Integer> safeLevels = new ArrayList<>(NUM_BANDS);
-            for (int i = 0; i < NUM_BANDS; i++) {
-                int level = (levels != null && i < levels.size() && levels.get(i) != null) ? levels.get(i) : 0;
-                safeLevels.add(level);
-                systemEq.setPreEqBandAllChannelsTo(i,
-                        new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[i], levelToGainDb(level)));
+        if (serviceBound && spotifyService != null && dataSource != null) {
+            spotifyService.applyPreset(dataSource);
+            if (dataSource != eq) {
+                eq.setBandLevels(dataSource.getBandLevels());
             }
-            dataSource.setBandLevels(safeLevels);
-            if (dataSource != currentEq) {
-                currentEq.setBandLevels(safeLevels);
-            }
+        }
 
-            // Redraw layout tracks to fit the loaded properties
+        buildBandUiFromSystemEqualizer();
+    }
+
+    private void bindToSpotifyService() {
+        android.content.Intent intent = new android.content.Intent(requireContext(), SpotifyMonitorService.class);
+        requireContext().bindService(intent, serviceConnection, android.content.Context.BIND_AUTO_CREATE);
+    }
+
+    /**
+     * Called (on the main thread) whenever SpotifyMonitorService's state
+     * changes on its own - i.e. an auto-switch from a Spotify track change,
+     * not something this Fragment initiated. Re-reads the service's current
+     * state and refreshes the UI to match, same as a manual selection would.
+     */
+    private void onServiceStateChanged() {
+        if (spotifyService == null) return;
+        currentEq = spotifyService.getCurrentEq();
+        updateCurrentEqDisplay();
+        if (powerSwitch != null && systemEq != null) {
+            powerSwitch.setChecked(systemEq.getEnabled());
+        }
+        if (systemEq != null && eqUiContainer != null && eqUiContainer.getVisibility() == View.VISIBLE) {
             buildBandUiFromSystemEqualizer();
         }
     }
@@ -615,63 +652,6 @@ public class EqualizerEditorFragment extends Fragment {
         return eq;
     }
 
-    /**
-     * Called by MainActivity whenever the Spotify App Remote SDK reports the
-     * currently playing track has changed (not on every player-state tick -
-     * MainActivity only calls this when the song/artist actually differ from
-     * the last one). Looks for a type-0 (song+artist) preset matching the new
-     * track and switches to it; if none matches, turns the EQ off instead of
-     * leaving whatever preset was previously engaged still applied to a song
-     * it wasn't tuned for. currentEq/the toolbar's displayed name are left
-     * alone when there's no match - only systemEq's enabled state changes.
-     */
-    public void onSpotifyTrackChanged(String songName, String artistName) {
-        if (!isAdded() || systemEq == null) return;
-
-        SelectedEqualizer match = findPresetForTrack(songName, artistName);
-
-        if (match != null) {
-            systemEq.setEnabled(true);
-            syncPowerSwitchUi(true);
-            applySelectedPreset(match);
-        } else {
-            systemEq.setEnabled(false);
-            syncPowerSwitchUi(false);
-        }
-    }
-
-    /**
-     * Same matching rule findMatchingPreset uses when creating a preset
-     * (case-insensitive, trimmed name+artist, song-type only) - so "this
-     * matches an existing preset" and "this matches what's playing" stay
-     * consistent with each other.
-     */
-    private SelectedEqualizer findPresetForTrack(String songName, String artistName) {
-        if (songName == null) return null;
-        String normalizedName = songName.trim().toLowerCase(Locale.US);
-        String normalizedArtist = artistName == null ? "" : artistName.trim().toLowerCase(Locale.US);
-
-        for (SelectedEqualizer eq : presets) {
-            if (eq.getType() != 0) continue; // only song+artist presets, not genre
-            String eqName = eq.getName() == null ? "" : eq.getName().trim().toLowerCase(Locale.US);
-            String eqArtist = eq.getArtist() == null ? "" : eq.getArtist().trim().toLowerCase(Locale.US);
-            if (eqName.equals(normalizedName) && eqArtist.equals(normalizedArtist)) {
-                return eq;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Keeps the visible switch in sync when systemEq's enabled state is
-     * changed programmatically (by track matching) rather than by the user
-     * tapping the switch itself.
-     */
-    private void syncPowerSwitchUi(boolean enabled) {
-        if (powerSwitch != null && powerSwitch.isChecked() != enabled) {
-            powerSwitch.setChecked(enabled);
-        }
-    }
 
     private void updateCurrentEqDisplay() {
         if (presetNameText != null) {
@@ -750,7 +730,7 @@ public class EqualizerEditorFragment extends Fragment {
 
                     // Build modern dynamic generic collection arrays explicitly
                     List<Integer> bandIds = new ArrayList<>();
-                    for (int i = 0; i < NUM_BANDS; i++) {
+                    for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
                         bandIds.add(i);
                     }
                     List<Integer> initialLevels = existingMatch != null
@@ -957,7 +937,7 @@ public class EqualizerEditorFragment extends Fragment {
             SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
 
             List<Integer> bandIds = new ArrayList<>();
-            for (int i = 0; i < NUM_BANDS; i++) {
+            for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
                 bandIds.add(i);
             }
             List<Integer> initialLevels = existingMatch != null
@@ -1019,8 +999,8 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private static List<Integer> zeroLevels() {
-        List<Integer> levels = new ArrayList<>(NUM_BANDS);
-        for (int i = 0; i < NUM_BANDS; i++) {
+        List<Integer> levels = new ArrayList<>(EqBandConfig.NUM_BANDS);
+        for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
             levels.add(0);
         }
         return levels;
@@ -1028,38 +1008,6 @@ public class EqualizerEditorFragment extends Fragment {
 
     private static List<Integer> nonNullLevels(List<Integer> levels) {
         return levels != null ? levels : zeroLevels();
-    }
-
-    private void initSystemEqualizer(int audioSessionId) {
-        try {
-            DynamicsProcessing.Config config = new DynamicsProcessing.Config.Builder(
-                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
-                    /* channelCount= */ 2,
-                    /* preEqInUse= */ true,
-                    /* preEqBandCount= */ NUM_BANDS,
-                    /* mbcInUse= */ false,
-                    /* mbcBandCount= */ 0,
-                    /* postEqInUse= */ false,
-                    /* postEqBandCount= */ 0,
-                    /* limiterInUse= */ false)
-                    .build();
-
-            systemEq = new DynamicsProcessing(/* priority= */ 0, audioSessionId, config);
-            systemEq.setEnabled(true);
-
-            // The Builder above seeds every band with its own default frequency
-            // spacing; overwrite each one now with our 30 Hz-8000 Hz layout so
-            // the initial engine state goes through the exact same call every
-            // later live update uses.
-            for (int b = 0; b < NUM_BANDS; b++) {
-                systemEq.setPreEqBandAllChannelsTo(b,
-                        new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[b], 0f));
-            }
-
-        } catch (Throwable t) {
-            systemEq = null;
-            Toast.makeText(requireContext(), "Equalizer not supported: " + t.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
-        }
     }
 
     private void buildBandUiFromSystemEqualizer() {
@@ -1070,7 +1018,7 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer.setClipToPadding(false);
 
 
-        for (int band = 0; band < NUM_BANDS; band++) {
+        for (int band = 0; band < EqBandConfig.NUM_BANDS; band++) {
             final int finalBand = band;
 
             View bandView = LayoutInflater.from(requireContext()).inflate(R.layout.equalizer_band_item, bandsContainer, false);
@@ -1092,7 +1040,7 @@ public class EqualizerEditorFragment extends Fragment {
             sb.setProgress(currentLevel - MIN_LEVEL);
 
             if (label != null) {
-                label.setText(formatFrequencyLabel(BAND_FREQUENCIES_HZ[finalBand]));
+                label.setText(formatFrequencyLabel(EqBandConfig.BAND_FREQUENCIES_HZ[finalBand]));
             }
 
 
@@ -1110,7 +1058,7 @@ public class EqualizerEditorFragment extends Fragment {
 
                     if (systemEq != null) {
                         systemEq.setPreEqBandAllChannelsTo(finalBand,
-                                new DynamicsProcessing.EqBand(true, BAND_FREQUENCIES_HZ[finalBand], levelToGainDb(targetLevel)));
+                                new DynamicsProcessing.EqBand(true, EqBandConfig.BAND_FREQUENCIES_HZ[finalBand], levelToGainDb(targetLevel)));
 
                         if (currentEq != null && currentEq.getBandLevels() != null
                                 && finalBand < currentEq.getBandLevels().size()) {
@@ -1169,14 +1117,14 @@ public class EqualizerEditorFragment extends Fragment {
      * Saves the full set of band levels for the current preset, read directly
      * from systemEq (the live audio engine) rather than trusting the in-memory
      * currentEq.bandLevels list to have stayed perfectly in sync. systemEq
-     * always holds exactly NUM_BANDS valid bands, so this can never hand
+     * always holds exactly EqBandConfig.NUM_BANDS valid bands, so this can never hand
      * Firebase a null or short-length list.
      */
     private void persistCurrentBandLevels() {
         if (currentEq == null || dataHandler == null || systemEq == null) return;
 
-        List<Integer> freshLevels = new ArrayList<>(NUM_BANDS);
-        for (int i = 0; i < NUM_BANDS; i++) {
+        List<Integer> freshLevels = new ArrayList<>(EqBandConfig.NUM_BANDS);
+        for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
             float gainDb = systemEq.getPreEqBandByChannelIndex(0, i).getGain();
             freshLevels.add(gainDbToLevel(gainDb));
         }
@@ -1226,17 +1174,22 @@ public class EqualizerEditorFragment extends Fragment {
         if (dataHandler != null) {
             dataHandler.stopListening();
         }
-        // To keep the equalizer working while in settings, we DO NOT release it here.
-        // It will be released when the fragment is actually destroyed (onDestroy) or if we implement
-        // release logic in the Activity.
+        // Same reasoning as before: don't tear down the service connection
+        // here, so the EQ keeps working while navigating to/from Settings.
+        // Unbinding happens in onDestroy instead.
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (systemEq != null) {
-            systemEq.release();
-            systemEq = null;
+        if (serviceBound) {
+            if (spotifyService != null) {
+                // The service outlives this Fragment - clear its reference to
+                // us so it doesn't hold onto a destroyed Fragment indefinitely.
+                spotifyService.setStateListener(null);
+            }
+            requireContext().unbindService(serviceConnection);
+            serviceBound = false;
         }
     }
 }

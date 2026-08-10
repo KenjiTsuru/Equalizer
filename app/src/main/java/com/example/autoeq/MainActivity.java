@@ -1,18 +1,25 @@
 package com.example.autoeq;
 
+import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.spotify.android.appremote.api.ConnectionParams;
-import com.spotify.android.appremote.api.Connector;
-import com.spotify.android.appremote.api.SpotifyAppRemote;
-import com.spotify.protocol.types.Track;
 import com.spotify.sdk.android.auth.AuthorizationClient;
 import com.spotify.sdk.android.auth.AuthorizationRequest;
 import com.spotify.sdk.android.auth.AuthorizationResponse;
@@ -23,21 +30,21 @@ public class MainActivity extends AppCompatActivity {
     private static final String CLIENT_ID = BuildConfig.SPOTIFY_CLIENT_ID;
     private static final String REDIRECT_URI = "com.example.autoeq://spotify-callback"; // Must match dashboard
     private static final int WEB_API_TOKEN_REQUEST_CODE = 1337;
-    private SpotifyAppRemote mSpotifyAppRemote; // Controls the local Spotify player
-    private EqualizerEditorFragment equalizerFragment;
-
-    // Last track reported to the Fragment, so a player-state tick that isn't
-    // an actual song change (pause/resume, seek, etc.) doesn't re-trigger
-    // preset matching for a track that's still playing.
-    private String lastTrackedSongName;
-    private String lastTrackedArtistName;
 
     // Cached Web API token for the playlist-import feature. Separate from
-    // App Remote's own authorization below - App Remote only covers local
-    // playback state, not listing/reading playlists, which needs real Web
-    // API scopes via the browser-based auth flow.
+    // SpotifyMonitorService's own App Remote connection - App Remote only
+    // covers local playback state, not listing/reading playlists, which
+    // needs real Web API scopes via the browser-based auth flow.
     private String cachedWebApiToken;
     private SpotifyTokenCallback pendingTokenCallback;
+
+    private final ActivityResultLauncher<String> notificationPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
+                // Nothing to branch on either way - the foreground service
+                // still starts and works without it, Android just won't show
+                // its notification (silently, no crash) if this is denied.
+                Log.d(TAG, "POST_NOTIFICATIONS granted: " + granted);
+            });
 
     public interface SpotifyTokenCallback {
         void onTokenReady(String accessToken);
@@ -48,83 +55,59 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main); // sets the whole view to activity_main
-        equalizerFragment = new EqualizerEditorFragment();
 
-        getSupportFragmentManager().beginTransaction().replace(R.id.equalizer_fragment_container, equalizerFragment)
+        getSupportFragmentManager().beginTransaction()
+                .replace(R.id.equalizer_fragment_container, new EqualizerEditorFragment())
                 .commit();
-
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
             return insets;
         });
+
+        requestNotificationPermissionIfNeeded();
+        requestIgnoreBatteryOptimizationsIfNeeded();
+        startAutoEqService();
     }
 
-    @Override
-    protected void onStart() {
-        super.onStart();
-        connectToAppRemote();
-    }
+    // Android 13+ requires this to be requested at runtime before any
+    // notification can show, including a foreground service's required one.
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
 
-    // Connects to the Spotify app running on the device so we can read live
-    // playback state (currently playing track, artist, etc.). App Remote
-    // handles its own authorization with a native in-app Spotify permission
-    // dialog - no browser redirect needed just to read playback state.
-    private void connectToAppRemote() {
-        if (CLIENT_ID == null || CLIENT_ID.isEmpty()) {
-            Log.e(TAG, "SPOTIFY_CLIENT_ID is empty - set it in local.properties before connecting");
-            return;
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
         }
-
-        ConnectionParams connectionParams =
-                new ConnectionParams.Builder(CLIENT_ID)
-                        .setRedirectUri(REDIRECT_URI)
-                        .showAuthView(true)
-                        .build();
-
-        SpotifyAppRemote.connect(this, connectionParams, new Connector.ConnectionListener() {
-            @Override
-            public void onConnected(SpotifyAppRemote spotifyAppRemote) {
-                mSpotifyAppRemote = spotifyAppRemote;
-                Log.d(TAG, "Connected to Spotify App Remote!");
-                trackCurrentTrack();
-            }
-
-            @Override
-            public void onFailure(Throwable throwable) {
-                Log.e(TAG, "Could not connect to local Spotify app", throwable);
-            }
-        });
     }
 
-    // Subscribes to player state updates so we get notified every time the
-    // track changes, is paused, resumed, or skipped. Only acts when the
-    // song/artist actually differ from the last one seen - PlayerState fires
-    // on every change (pause, seek, etc.), not just track changes.
-    private void trackCurrentTrack() {
-        mSpotifyAppRemote.getPlayerApi()
-                .subscribeToPlayerState()
-                .setEventCallback(playerState -> {
-                    final Track track = playerState.track;
-                    if (track == null) return;
+    // Without this, many OEMs (Samsung, Xiaomi, etc.) kill the whole app
+    // process during idle/Doze under battery management, foreground service
+    // or not - the service's own START_STICKY only helps once the process is
+    // already dead, it can't prevent the kill in the first place. This shows
+    // the standard system "allow to run in background" prompt so the auto-
+    // switching service actually stays alive.
+    private void requestIgnoreBatteryOptimizationsIfNeeded() {
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager == null || powerManager.isIgnoringBatteryOptimizations(getPackageName())) return;
 
-                    String songName = track.name;
-                    String artistName = track.artist != null ? track.artist.name : null;
+        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+        intent.setData(Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(intent);
+        } catch (android.content.ActivityNotFoundException e) {
+            Log.w(TAG, "Device doesn't support battery optimization exemption requests", e);
+        }
+    }
 
-                    boolean sameAsBefore = songName != null && songName.equals(lastTrackedSongName)
-                            && (artistName == null ? lastTrackedArtistName == null : artistName.equals(lastTrackedArtistName));
-                    if (sameAsBefore) return;
-
-                    lastTrackedSongName = songName;
-                    lastTrackedArtistName = artistName;
-
-                    Log.d(TAG, "Now Playing: " + songName + " by " + artistName);
-
-                    if (equalizerFragment != null) {
-                        equalizerFragment.onSpotifyTrackChanged(songName, artistName);
-                    }
-                });
+    // Starts the service that owns the EQ effect and the Spotify connection
+    // for as long as the app is installed and has been opened at least once
+    // - it keeps running (and auto-switching presets) after this Activity is
+    // gone, which is the whole point. See SpotifyMonitorService.
+    private void startAutoEqService() {
+        Intent serviceIntent = new Intent(this, SpotifyMonitorService.class);
+        ContextCompat.startForegroundService(this, serviceIntent);
     }
 
     /**
@@ -189,15 +172,5 @@ public class MainActivity extends AppCompatActivity {
                     break;
             }
         }
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        // Closes the background pipe to stop the app from consuming battery when closed
-        if (mSpotifyAppRemote != null && mSpotifyAppRemote.isConnected()) {
-            SpotifyAppRemote.disconnect(mSpotifyAppRemote);
-        }
-        mSpotifyAppRemote = null;
     }
 }
