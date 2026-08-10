@@ -23,6 +23,7 @@
         android:layout_height="match_parent"
         android:minWidth="0dp"
         android:minHeight="0dp"
+        android:maxHeight="6dp"
         android:splitTrack="false"
         android:thumbOffset="0dp"
         android:paddingStart="11dp"
