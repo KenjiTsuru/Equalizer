@@ -37,6 +37,8 @@ public class SpotifyWebApiClient {
     public interface TracksCallback {
         void onSuccess(List<SpotifyTrack> tracks);
         void onFailure(Exception e);
+        /** Called after each page (Spotify caps pages at 50) - total is -1 if the response didn't include one. Lets callers show real fetch progress instead of an unbounded spinner. */
+        void onProgress(int fetchedSoFar, int total);
     }
 
     public static class SpotifyPlaylist {
@@ -179,6 +181,10 @@ public class SpotifyWebApiClient {
                             }
                         }
                     }
+
+                    JsonElement totalEl = body.get("total");
+                    int total = totalEl != null && !totalEl.isJsonNull() ? totalEl.getAsInt() : -1;
+                    callback.onProgress(collected.size(), total);
 
                     JsonElement nextEl = body.get("next");
                     if (nextEl != null && !nextEl.isJsonNull()) {

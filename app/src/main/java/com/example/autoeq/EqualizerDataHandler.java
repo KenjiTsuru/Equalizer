@@ -9,7 +9,9 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class EqualizerDataHandler {
     private static final String TAG = "EqualizerDataHandler";
@@ -137,24 +139,94 @@ public class EqualizerDataHandler {
         }
     }
 
-    public void deleteEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {    if (equalizer == null || equalizer.getId() == null) {
-        if (callback != null) callback.onFailure(new IllegalArgumentException("Invalid Preset ID"));
-        return;
+    /** A local, network-free id for a not-yet-saved preset - same push-key generator saveEqualizer uses internally, exposed so batch callers (playlist import) can assign ids up front for cross-referencing (e.g. linking duplicates within the same import) before the actual write happens. */
+    public String generatePresetId() {
+        return userDbRef != null ? userDbRef.push().getKey() : null;
     }
+
+    /**
+     * Writes many presets in one multi-location update instead of one
+     * setValue() per preset. Each write to a child under userDbRef re-fires
+     * the whole-list listenToPresets listener - saving N presets one at a
+     * time means N full list reloads (each triggering a full drawer
+     * rebuild), which is what made large playlist imports freeze the UI.
+     * One batched update here means exactly one reload. Every equalizer
+     * must already have its id set (see generatePresetId).
+     */
+    public void saveEqualizers(List<SelectedEqualizer> equalizers, OperationCallback callback) {
+        if (equalizers == null || equalizers.isEmpty()) {
+            if (callback != null) callback.onSuccess();
+            return;
+        }
 
         if (userDbRef == null) {
             if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
             return;
         }
 
-        // Use .child(id).removeValue() to delete the specific preset
-        userDbRef.child(equalizer.getId()).removeValue()
+        Map<String, Object> updates = new HashMap<>();
+        for (SelectedEqualizer eq : equalizers) {
+            if (eq.getId() == null) continue;
+            updates.put(eq.getId(), eq);
+        }
+
+        userDbRef.updateChildren(updates)
                 .addOnSuccessListener(aVoid -> {
-                    Log.d(TAG, "Preset deleted successfully: " + equalizer.getName());
                     if (callback != null) callback.onSuccess();
                 })
                 .addOnFailureListener(e -> {
-                    Log.e(TAG, "Failed to delete preset", e);
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
+    /** Deletes many presets in one multi-location update - see saveEqualizers for why this matters for multi-select delete. Setting a child to null via updateChildren deletes it, same as removeValue(). */
+    public void deleteEqualizers(List<String> presetIds, OperationCallback callback) {
+        if (presetIds == null || presetIds.isEmpty()) {
+            if (callback != null) callback.onSuccess();
+            return;
+        }
+
+        if (userDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        Map<String, Object> updates = new HashMap<>();
+        for (String id : presetIds) {
+            updates.put(id, null);
+        }
+
+        userDbRef.updateChildren(updates)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
+    }
+
+    /** Deletes many folders in one multi-location update - see saveEqualizers for why this matters for multi-select delete. */
+    public void deleteFolders(List<String> folderIds, OperationCallback callback) {
+        if (folderIds == null || folderIds.isEmpty()) {
+            if (callback != null) callback.onSuccess();
+            return;
+        }
+
+        if (folderDbRef == null) {
+            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
+            return;
+        }
+
+        Map<String, Object> updates = new HashMap<>();
+        for (String id : folderIds) {
+            updates.put(id, null);
+        }
+
+        folderDbRef.updateChildren(updates)
+                .addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
                     if (callback != null) callback.onFailure(e);
                 });
     }
@@ -216,26 +288,6 @@ public class EqualizerDataHandler {
         }
 
         folderDbRef.child(folderId).setValue(folder)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
-    }
-
-    public void deleteFolder(Folder folder, OperationCallback callback) {
-        if (folder == null || folder.getId() == null) {
-            if (callback != null) callback.onFailure(new IllegalArgumentException("Invalid Folder ID"));
-            return;
-        }
-
-        if (folderDbRef == null) {
-            if (callback != null) callback.onFailure(new IllegalStateException("Database reference missing"));
-            return;
-        }
-
-        folderDbRef.child(folder.getId()).removeValue()
                 .addOnSuccessListener(aVoid -> {
                     if (callback != null) callback.onSuccess();
                 })

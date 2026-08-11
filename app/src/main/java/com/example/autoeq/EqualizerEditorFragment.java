@@ -22,6 +22,7 @@ import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.Toast;
@@ -119,6 +120,15 @@ public class EqualizerEditorFragment extends Fragment {
     private View btnDeleteSelected;
     private View btnMoveSelected;
     private View btnExitSelection;
+
+    // Shown during playlist import and multi-select delete - both do a
+    // network round trip that can take a few seconds for a large playlist,
+    // and previously gave no indication anything was happening while the
+    // (now-fixed) N-writes-in-a-loop bug froze the UI. Kept around and
+    // reused rather than rebuilt per call.
+    private AlertDialog progressDialog;
+    private ProgressBar progressDialogBar;
+    private TextView progressDialogText;
 
     public EqualizerEditorFragment() {}
 
@@ -500,6 +510,40 @@ public class EqualizerEditorFragment extends Fragment {
         return dataSource != null ? dataSource.getAlbumArtUrl() : null;
     }
 
+    /** Shows (or updates, if already showing) a non-cancelable "please wait" dialog with an indeterminate spinner. */
+    private void showProgressDialog(String message) {
+        if (!isAdded()) return;
+        if (progressDialog == null) {
+            View view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_progress, null, false);
+            progressDialogBar = view.findViewById(R.id.progress_dialog_bar);
+            progressDialogText = view.findViewById(R.id.progress_dialog_text);
+            progressDialog = new AlertDialog.Builder(requireContext())
+                    .setView(view)
+                    .setCancelable(false)
+                    .create();
+        }
+        progressDialogBar.setIndeterminate(true);
+        progressDialogText.setText(message);
+        if (!progressDialog.isShowing()) progressDialog.show();
+    }
+
+    /** Switches the dialog to a determinate bar reflecting fetched/total - used while paginating a playlist, where the total is known up front. */
+    private void updateProgressDialog(String message, int fetched, int total) {
+        if (progressDialog == null || !progressDialog.isShowing()) return;
+        if (total > 0) {
+            progressDialogBar.setIndeterminate(false);
+            progressDialogBar.setMax(total);
+            progressDialogBar.setProgress(fetched);
+        } else {
+            progressDialogBar.setIndeterminate(true);
+        }
+        progressDialogText.setText(message);
+    }
+
+    private void dismissProgressDialog() {
+        if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
+    }
+
     private void onFolderRowClicked(Folder folder) {
         if (selectionMode) {
             toggleFolderSelection(folder.getId());
@@ -583,48 +627,64 @@ public class EqualizerEditorFragment extends Fragment {
                 .show();
     }
 
+    /**
+     * Deletes everything selected in two batched calls (all presets in one
+     * update, all folders in another) instead of one Firebase write per
+     * item. Deleting one at a time was what froze the UI on a multi-select
+     * delete: every removeValue() re-fires the whole-list listener, and each
+     * fire rebuilds the entire drawer menu from scratch - for N items that's
+     * N full rebuilds instead of two (one per batch).
+     */
     private void deleteSelected() {
         if (dataHandler == null) return;
 
-        // Deleting a folder deletes every preset inside it too, not just the
-        // folder itself.
-        for (Folder folder : folders) {
-            if (!selectedFolderIds.contains(folder.getId())) continue;
-
-            for (SelectedEqualizer eq : presets) {
-                if (!folder.getId().equals(eq.getFolderId())) continue;
-                dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
-                    @Override public void onSuccess() {}
-                    @Override public void onFailure(Exception e) {
-                        Log.e("FOLDER_DELETE", "Failed to delete preset in folder: " + eq.getName(), e);
-                    }
-                });
-            }
-
-            dataHandler.deleteFolder(folder, new EqualizerDataHandler.OperationCallback() {
-                @Override public void onSuccess() {}
-                @Override public void onFailure(Exception e) {
-                    Log.e("FOLDER_DELETE", "Failed to delete folder: " + folder.getName(), e);
-                }
-            });
-        }
-
+        List<String> folderIdsToDelete = new ArrayList<>(selectedFolderIds);
+        List<String> presetIdsToDelete = new ArrayList<>();
         for (SelectedEqualizer eq : presets) {
-            if (!selectedPresetIds.contains(eq.getId())) continue;
-            // Already handled above if it was inside a folder we just deleted.
-            if (eq.getFolderId() != null && selectedFolderIds.contains(eq.getFolderId())) continue;
+            // Deleting a folder deletes every preset inside it too, not just
+            // the folder itself - covered here by also including any preset
+            // whose folder is selected, whether or not the preset itself is.
+            boolean inSelectedFolder = eq.getFolderId() != null && selectedFolderIds.contains(eq.getFolderId());
+            if (selectedPresetIds.contains(eq.getId()) || inSelectedFolder) {
+                presetIdsToDelete.add(eq.getId());
+            }
+        }
 
-            dataHandler.deleteEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
-                @Override public void onSuccess() {}
+        int pendingBatches = (presetIdsToDelete.isEmpty() ? 0 : 1) + (folderIdsToDelete.isEmpty() ? 0 : 1);
+        if (pendingBatches == 0) {
+            setSelectionMode(false);
+            refreshDrawerList();
+            return;
+        }
+
+        showProgressDialog("Deleting...");
+        int[] remaining = {pendingBatches};
+        Runnable onBatchFinished = () -> {
+            if (--remaining[0] > 0 || !isAdded()) return;
+            dismissProgressDialog();
+            Toast.makeText(requireContext(), "Deleted", Toast.LENGTH_SHORT).show();
+            setSelectionMode(false);
+            refreshDrawerList();
+        };
+
+        if (!presetIdsToDelete.isEmpty()) {
+            dataHandler.deleteEqualizers(presetIdsToDelete, new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() { onBatchFinished.run(); }
                 @Override public void onFailure(Exception e) {
-                    Log.e("PRESET_DELETE", "Failed to delete preset: " + eq.getName(), e);
+                    Log.e("PRESET_DELETE", "Failed to delete presets", e);
+                    onBatchFinished.run();
                 }
             });
         }
-
-        Toast.makeText(requireContext(), "Deleted", Toast.LENGTH_SHORT).show();
-        setSelectionMode(false);
-        refreshDrawerList();
+        if (!folderIdsToDelete.isEmpty()) {
+            dataHandler.deleteFolders(folderIdsToDelete, new EqualizerDataHandler.OperationCallback() {
+                @Override public void onSuccess() { onBatchFinished.run(); }
+                @Override public void onFailure(Exception e) {
+                    Log.e("FOLDER_DELETE", "Failed to delete folders", e);
+                    onBatchFinished.run();
+                }
+            });
+        }
     }
 
     private void showMoveToFolderDialog() {
@@ -942,7 +1002,7 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void importPlaylist(String accessToken, SpotifyWebApiClient.SpotifyPlaylist playlist) {
-        Toast.makeText(requireContext(), "Importing \"" + playlist.name + "\"...", Toast.LENGTH_SHORT).show();
+        showProgressDialog("Fetching \"" + playlist.name + "\"...");
 
         spotifyWebApiClient.fetchPlaylistTracks(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
             @Override
@@ -954,8 +1014,18 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onFailure(Exception e) {
                 if (!isAdded() || getActivity() == null) return;
-                getActivity().runOnUiThread(() ->
-                        Toast.makeText(requireContext(), "Could not load playlist tracks: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                getActivity().runOnUiThread(() -> {
+                    dismissProgressDialog();
+                    Toast.makeText(requireContext(), "Could not load playlist tracks: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+
+            @Override
+            public void onProgress(int fetchedSoFar, int total) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> updateProgressDialog(
+                        "Fetching tracks..." + (total > 0 ? " (" + fetchedSoFar + "/" + total + ")" : " (" + fetchedSoFar + ")"),
+                        fetchedSoFar, total));
             }
         });
     }
@@ -989,20 +1059,33 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onFailure(Exception e) {
                 if (isAdded() && getActivity() != null) {
-                    getActivity().runOnUiThread(() ->
-                            Toast.makeText(requireContext(), "Could not save folder: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                    getActivity().runOnUiThread(() -> {
+                        dismissProgressDialog();
+                        Toast.makeText(requireContext(), "Could not save folder: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    });
                 }
             }
         });
     }
 
+    /**
+     * Builds every imported preset in memory, then writes them all in one
+     * batched call (see EqualizerDataHandler.saveEqualizers) instead of one
+     * Firebase write per track. Writing one at a time was what froze the UI
+     * on large playlists: every single write re-fires the whole-list
+     * listener, and each fire rebuilds the entire drawer menu from scratch -
+     * for N tracks that's N full rebuilds instead of one.
+     */
     private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+        updateProgressDialog("Saving " + tracks.size() + " song" + (tracks.size() == 1 ? "" : "s") + "...", 0, 0);
+
         int created = 0;
         int linked = 0;
         // Tracks already queued this same import count as "existing" too, so
         // a playlist with the same song listed twice links the second one to
         // the first instead of creating two independent presets.
         List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+        List<SelectedEqualizer> toSave = new ArrayList<>(tracks.size());
 
         for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
             SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
@@ -1018,6 +1101,10 @@ public class EqualizerEditorFragment extends Fragment {
             SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, bandIds, initialLevels);
             eq.setFolderId(folder.getId());
             eq.setAlbumArtUrl(track.albumArtUrl);
+            // Assigned up front (push keys are generated locally, no network
+            // round trip) so existingMatch.getId() below already resolves
+            // correctly for duplicates found earlier in this same loop.
+            eq.setId(dataHandler.generatePresetId());
             if (existingMatch != null) {
                 eq.setLinkedPresetId(existingMatch.getId());
                 linked++;
@@ -1025,20 +1112,32 @@ public class EqualizerEditorFragment extends Fragment {
                 created++;
             }
             combinedExisting.add(eq);
-
-            dataHandler.saveEqualizer(eq, new EqualizerDataHandler.OperationCallback() {
-                @Override public void onSuccess() {}
-                @Override public void onFailure(Exception e) {
-                    Log.e("PLAYLIST_IMPORT", "Failed to save imported preset: " + track.name, e);
-                }
-            });
+            toSave.add(eq);
         }
 
-        Toast.makeText(requireContext(),
-                "Imported " + (created + linked) + " song" + (created + linked == 1 ? "" : "s")
-                        + (linked > 0 ? " (" + linked + " linked to existing presets)" : "")
-                        + " into \"" + folder.getName() + "\"",
-                Toast.LENGTH_LONG).show();
+        int finalCreated = created;
+        int finalLinked = linked;
+        dataHandler.saveEqualizers(toSave, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                int total = finalCreated + finalLinked;
+                Toast.makeText(requireContext(),
+                        "Imported " + total + " song" + (total == 1 ? "" : "s")
+                                + (finalLinked > 0 ? " (" + finalLinked + " linked to existing presets)" : "")
+                                + " into \"" + folder.getName() + "\"",
+                        Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_IMPORT", "Failed to save imported presets", e);
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                Toast.makeText(requireContext(), "Could not save imported songs: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     /**
@@ -1246,6 +1345,10 @@ public class EqualizerEditorFragment extends Fragment {
         if (dataHandler != null) {
             dataHandler.stopListening();
         }
+        // Avoids a window leak - the dialog holds this destroyed view's
+        // context, so it can't just be left showing.
+        dismissProgressDialog();
+        progressDialog = null;
         // Same reasoning as before: don't tear down the service connection
         // here, so the EQ keeps working while navigating to/from Settings.
         // Unbinding happens in onDestroy instead.
