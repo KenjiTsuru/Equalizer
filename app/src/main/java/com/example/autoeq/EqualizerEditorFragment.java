@@ -980,6 +980,12 @@ public class EqualizerEditorFragment extends Fragment {
         });
     }
 
+    /**
+     * Playlist names as native multi-choice items - Android renders these as
+     * a checkbox with a checkmark per row, which is exactly the visual cue
+     * asked for, with no custom row layout needed. Import/Cancel sit on
+     * opposite sides of the bottom bar via setPositiveButton/setNegativeButton.
+     */
     private void showPlaylistPickerDialog(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> spotifyPlaylists) {
         if (spotifyPlaylists.isEmpty()) {
             Toast.makeText(requireContext(), "No playlists found on this Spotify account", Toast.LENGTH_LONG).show();
@@ -987,47 +993,97 @@ public class EqualizerEditorFragment extends Fragment {
         }
 
         String[] names = new String[spotifyPlaylists.size()];
+        boolean[] checkedPlaylists = new boolean[spotifyPlaylists.size()];
         for (int i = 0; i < spotifyPlaylists.size(); i++) {
             names[i] = spotifyPlaylists.get(i).name;
         }
 
         new AlertDialog.Builder(requireContext())
-                .setTitle("Choose a playlist")
-                .setItems(names, (dialog, which) -> importPlaylist(accessToken, spotifyPlaylists.get(which)))
+                .setTitle("Choose playlists")
+                .setMultiChoiceItems(names, checkedPlaylists, (dialog, which, isChecked) -> checkedPlaylists[which] = isChecked)
+                .setPositiveButton("Import", (dialog, which) -> {
+                    List<SpotifyWebApiClient.SpotifyPlaylist> selected = new ArrayList<>();
+                    for (int i = 0; i < checkedPlaylists.length; i++) {
+                        if (checkedPlaylists[i]) selected.add(spotifyPlaylists.get(i));
+                    }
+                    if (selected.isEmpty()) {
+                        Toast.makeText(requireContext(), "No playlists selected", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    importPlaylists(accessToken, selected);
+                })
                 .setNegativeButton("Cancel", null)
                 .show();
     }
 
-    private void importPlaylist(String accessToken, SpotifyWebApiClient.SpotifyPlaylist playlist) {
-        showProgressDialog("Fetching \"" + playlist.name + "\"...");
+    /** Reports how many presets one playlist's import produced, so a multi-playlist import can total them up into a single summary at the end. */
+    private interface ImportCompletionCallback {
+        void onComplete(int created, int linked);
+    }
+
+    private void importPlaylists(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists) {
+        showProgressDialog("Importing " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s") + "...");
+        importPlaylistsSequentially(accessToken, playlists, 0, new int[2]);
+    }
+
+    /**
+     * Imports playlists one at a time (rather than all at once) so the
+     * progress dialog can show honest "playlist X of N" status and so one
+     * playlist failing (network hiccup, deleted mid-import, etc.) doesn't
+     * abort the rest of the batch - it's logged and skipped instead.
+     * totals[0]/[1] accumulate created/linked counts across every playlist
+     * for the single summary toast shown once the whole batch finishes.
+     */
+    private void importPlaylistsSequentially(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists,
+                                              int index, int[] totals) {
+        if (index >= playlists.size()) {
+            if (!isAdded()) return;
+            dismissProgressDialog();
+            int total = totals[0] + totals[1];
+            Toast.makeText(requireContext(),
+                    "Imported " + total + " song" + (total == 1 ? "" : "s")
+                            + " from " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s")
+                            + (totals[1] > 0 ? " (" + totals[1] + " linked to existing presets)" : ""),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        SpotifyWebApiClient.SpotifyPlaylist playlist = playlists.get(index);
+        String progressPrefix = "(" + (index + 1) + "/" + playlists.size() + ") ";
+        updateProgressDialog(progressPrefix + "Fetching \"" + playlist.name + "\"...", 0, 0);
+
+        ImportCompletionCallback next = (created, linked) -> {
+            totals[0] += created;
+            totals[1] += linked;
+            importPlaylistsSequentially(accessToken, playlists, index + 1, totals);
+        };
 
         spotifyWebApiClient.fetchPlaylistTracks(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
             @Override
             public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
                 if (!isAdded() || getActivity() == null) return;
-                getActivity().runOnUiThread(() -> finishPlaylistImport(playlist, tracks));
+                getActivity().runOnUiThread(() -> finishPlaylistImport(playlist, tracks, next));
             }
 
             @Override
             public void onFailure(Exception e) {
+                Log.e("PLAYLIST_IMPORT", "Failed to load tracks for \"" + playlist.name + "\"", e);
                 if (!isAdded() || getActivity() == null) return;
-                getActivity().runOnUiThread(() -> {
-                    dismissProgressDialog();
-                    Toast.makeText(requireContext(), "Could not load playlist tracks: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                });
+                getActivity().runOnUiThread(() -> next.onComplete(0, 0));
             }
 
             @Override
             public void onProgress(int fetchedSoFar, int total) {
                 if (!isAdded() || getActivity() == null) return;
                 getActivity().runOnUiThread(() -> updateProgressDialog(
-                        "Fetching tracks..." + (total > 0 ? " (" + fetchedSoFar + "/" + total + ")" : " (" + fetchedSoFar + ")"),
+                        progressPrefix + "Fetching \"" + playlist.name + "\"..." + (total > 0 ? " (" + fetchedSoFar + "/" + total + ")" : " (" + fetchedSoFar + ")"),
                         fetchedSoFar, total));
             }
         });
     }
 
-    private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+    private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
+                                       ImportCompletionCallback onComplete) {
         if (dataHandler == null) {
             dataHandler = new EqualizerDataHandler();
         }
@@ -1049,17 +1105,15 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onSuccess() {
                 if (isAdded() && getActivity() != null) {
-                    getActivity().runOnUiThread(() -> importTracksIntoFolder(finalFolder, tracks));
+                    getActivity().runOnUiThread(() -> importTracksIntoFolder(finalFolder, tracks, onComplete));
                 }
             }
 
             @Override
             public void onFailure(Exception e) {
+                Log.e("PLAYLIST_IMPORT", "Could not save folder for \"" + playlist.name + "\"", e);
                 if (isAdded() && getActivity() != null) {
-                    getActivity().runOnUiThread(() -> {
-                        dismissProgressDialog();
-                        Toast.makeText(requireContext(), "Could not save folder: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    });
+                    getActivity().runOnUiThread(() -> onComplete.onComplete(0, 0));
                 }
             }
         });
@@ -1073,8 +1127,9 @@ public class EqualizerEditorFragment extends Fragment {
      * listener, and each fire rebuilds the entire drawer menu from scratch -
      * for N tracks that's N full rebuilds instead of one.
      */
-    private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks) {
-        updateProgressDialog("Saving " + tracks.size() + " song" + (tracks.size() == 1 ? "" : "s") + "...", 0, 0);
+    private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks, ImportCompletionCallback onComplete) {
+        updateProgressDialog("Saving " + tracks.size() + " song" + (tracks.size() == 1 ? "" : "s")
+                + " into \"" + folder.getName() + "\"...", 0, 0);
 
         int created = 0;
         int linked = 0;
@@ -1114,21 +1169,14 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onSuccess() {
                 if (!isAdded()) return;
-                dismissProgressDialog();
-                int total = finalCreated + finalLinked;
-                Toast.makeText(requireContext(),
-                        "Imported " + total + " song" + (total == 1 ? "" : "s")
-                                + (finalLinked > 0 ? " (" + finalLinked + " linked to existing presets)" : "")
-                                + " into \"" + folder.getName() + "\"",
-                        Toast.LENGTH_LONG).show();
+                onComplete.onComplete(finalCreated, finalLinked);
             }
 
             @Override
             public void onFailure(Exception e) {
-                Log.e("PLAYLIST_IMPORT", "Failed to save imported presets", e);
+                Log.e("PLAYLIST_IMPORT", "Failed to save imported presets for \"" + folder.getName() + "\"", e);
                 if (!isAdded()) return;
-                dismissProgressDialog();
-                Toast.makeText(requireContext(), "Could not save imported songs: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                onComplete.onComplete(0, 0);
             }
         });
     }
