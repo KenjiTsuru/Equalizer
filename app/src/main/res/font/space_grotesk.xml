@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Downloadable font (Android's Downloadable Fonts API - fetched via Google
+     Play Services on first use and cached on-device, no font file bundled in
+     the app). Chose Space Grotesk over the suggested Cutive Mono: Cutive
+     Mono is a typewriter-style serif monospace face, which reads as
+     retro/vintage and doesn't sit well against the sleek purple-glow EQ
+     graph redesign. Space Grotesk is a modern geometric sans with a bit of
+     technical/instrument-panel character - elegant without being plain,
+     distinctive without being loud - which felt like a better fit for a
+     music EQ app. See res/values/font_certs.xml for the (standard, Google-
+     published) provider certificates this depends on.
+-->
+<font-family xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:fontProviderAuthority="com.google.android.gms.fonts"
+    app:fontProviderPackage="com.google.android.gms"
+    app:fontProviderQuery="Space Grotesk"
+    app:fontProviderCerts="@array/com_google_android_gms_fonts_certs">
+</font-family>

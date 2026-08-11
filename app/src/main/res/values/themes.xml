@@ -3,6 +3,11 @@
     <style name="Base.Theme.AutoEQ" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your light theme here. -->
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+
+        <!-- Applies app-wide by default - individual TextViews/buttons don't
+             need to opt in. See res/font/space_grotesk.xml. -->
+        <item name="android:fontFamily">@font/space_grotesk</item>
+        <item name="fontFamily">@font/space_grotesk</item>
     </style>
 
     <style name="Theme.AutoEQ" parent="Base.Theme.AutoEQ" />

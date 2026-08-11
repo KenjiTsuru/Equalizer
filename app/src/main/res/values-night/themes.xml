@@ -1,7 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!-- Overrides Material3's default dark baseline surfaces (a mid-gray,
+         not a true dark) with an explicit near-black scale instead - fixed
+         values rather than the theme's per-device dynamic color, so the
+         app looks the same everywhere and reads noticeably darker with more
+         contrast against the purple accent. Layered so the drawer/dialogs
+         (the higher surface-container levels) still read as a step lighter
+         than the main equalizer background, not identically flat black. -->
     <style name="Base.Theme.AutoEQ" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <item name="android:fontFamily">@font/space_grotesk</item>
+        <item name="fontFamily">@font/space_grotesk</item>
+
+        <item name="android:colorBackground">#08070A</item>
+        <item name="colorSurface">#08070A</item>
+        <item name="colorSurfaceContainerLowest">#050408</item>
+        <item name="colorSurfaceContainerLow">#0F0E13</item>
+        <item name="colorSurfaceContainer">#131218</item>
+        <item name="colorSurfaceContainerHigh">#18171D</item>
+        <item name="colorSurfaceContainerHighest">#1E1D24</item>
     </style>
 </resources>
