@@ -6,24 +6,23 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:minHeight="48dp"
+    android:paddingStart="16dp"
     android:paddingEnd="16dp"
     android:clickable="true"
     android:focusable="true"
     android:background="?attr/selectableItemBackground">
 
-    <ImageView
-        android:id="@+id/row_icon"
-        android:layout_width="24dp"
-        android:layout_height="24dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="32dp"
-        app:tint="?attr/colorOnSurfaceVariant" />
-
+    <!-- Title is first/flexible and the icon (album art for a song preset,
+         the expand/collapse chevron for a folder) is pinned last, at a fixed
+         size - so the icon always sits in the same spot against the drawer's
+         right edge no matter how long the title is, instead of shifting
+         around with it. -->
     <TextView
         android:id="@+id/row_title"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
+        android:layout_marginEnd="12dp"
         android:textSize="14sp"
         android:textColor="?attr/colorOnSurface" />
 
@@ -31,9 +30,15 @@
         android:id="@+id/row_checkbox"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
         android:clickable="false"
         android:focusable="false"
         android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/row_icon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        app:tint="?attr/colorOnSurfaceVariant" />
 
 </LinearLayout>
