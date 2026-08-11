@@ -51,9 +51,11 @@ public class SpotifyWebApiClient {
     public static class SpotifyTrack {
         public final String name;
         public final String artist;
-        public SpotifyTrack(String name, String artist) {
+        public final String albumArtUrl; // smallest size Spotify offers (usually 64x64) - null if none present
+        public SpotifyTrack(String name, String artist, String albumArtUrl) {
             this.name = name;
             this.artist = artist;
+            this.albumArtUrl = albumArtUrl;
         }
     }
 
@@ -110,6 +112,24 @@ public class SpotifyWebApiClient {
         fetchTracksPage(accessToken, BASE_URL + "/playlists/" + playlistId + "/items?limit=50", collected, callback);
     }
 
+    /**
+     * Spotify's album.images array is ordered largest-first (typically 640,
+     * 300, then 64px). Every use of this in the app renders at 24dp, so the
+     * smallest (last) entry is picked deliberately - it's plenty of
+     * resolution for the target size and keeps the download tiny.
+     */
+    private static String extractSmallestAlbumArtUrl(JsonObject track) {
+        JsonElement albumEl = track.get("album");
+        if (albumEl == null || !albumEl.isJsonObject()) return null;
+
+        JsonArray images = albumEl.getAsJsonObject().getAsJsonArray("images");
+        if (images == null || images.size() == 0) return null;
+
+        JsonElement smallest = images.get(images.size() - 1);
+        JsonElement urlEl = smallest.getAsJsonObject().get("url");
+        return urlEl != null && !urlEl.isJsonNull() ? urlEl.getAsString() : null;
+    }
+
     private void fetchTracksPage(String accessToken, String url, List<SpotifyTrack> collected, TracksCallback callback) {
         Request request = new Request.Builder()
                 .url(url)
@@ -152,9 +172,10 @@ public class SpotifyWebApiClient {
                             String artist = (artists != null && artists.size() > 0)
                                     ? artists.get(0).getAsJsonObject().get("name").getAsString()
                                     : null;
+                            String albumArtUrl = extractSmallestAlbumArtUrl(track);
 
                             if (name != null && artist != null) {
-                                collected.add(new SpotifyTrack(name, artist));
+                                collected.add(new SpotifyTrack(name, artist, albumArtUrl));
                             }
                         }
                     }

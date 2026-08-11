@@ -82,6 +82,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // Album art thumbnails in the preset drawer. Glide decodes straight to
+    // the target ImageView's size (no full-res bitmap ever held in memory)
+    // and disk-caches the result, so repeat renders of the same row cost
+    // no network or decode work at all.
+    implementation("com.github.bumptech.glide:glide:4.16.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)

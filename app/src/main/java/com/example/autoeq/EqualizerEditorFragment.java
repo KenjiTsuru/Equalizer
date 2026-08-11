@@ -1,6 +1,7 @@
 package com.example.autoeq;
 
 import android.app.AlertDialog;
+import android.content.res.ColorStateList;
 import android.media.audiofx.DynamicsProcessing;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
@@ -9,6 +10,8 @@ import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
+
+import com.bumptech.glide.Glide;
 
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -343,6 +346,7 @@ public class EqualizerEditorFragment extends Fragment {
             item.setActionView(buildDrawerRowView(
                     eq.getDisplayName(),
                     android.R.drawable.ic_media_next,
+                    resolveAlbumArtUrl(eq),
                     selectedPresetIds.contains(eq.getId()),
                     v -> onPresetRowClicked(eq),
                     v -> onPresetRowLongClicked(eq)
@@ -364,16 +368,19 @@ public class EqualizerEditorFragment extends Fragment {
         int dynamicId = 2000;
 
         for (Folder folder : folders) {
+            boolean expanded = folder.getId().equals(expandedFolderId);
+
             android.view.MenuItem folderItem = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
             folderItem.setActionView(buildDrawerRowView(
                     folder.getName(),
-                    android.R.drawable.ic_menu_agenda,
+                    R.drawable.ic_chevron_right,
+                    expanded ? 90f : 0f,
                     selectedFolderIds.contains(folder.getId()),
                     v -> onFolderRowClicked(folder),
                     v -> onFolderRowLongClicked(folder)
             ));
 
-            if (!folder.getId().equals(expandedFolderId)) continue;
+            if (!expanded) continue;
 
             for (SelectedEqualizer eq : presets) {
                 if (!folder.getId().equals(eq.getFolderId())) continue;
@@ -382,6 +389,7 @@ public class EqualizerEditorFragment extends Fragment {
                 presetItem.setActionView(buildDrawerRowView(
                         "     " + eq.getDisplayName(),
                         android.R.drawable.ic_media_next,
+                        resolveAlbumArtUrl(eq),
                         selectedPresetIds.contains(eq.getId()),
                         v -> onPresetRowClicked(eq),
                         v -> onPresetRowLongClicked(eq)
@@ -396,6 +404,7 @@ public class EqualizerEditorFragment extends Fragment {
             item.setActionView(buildDrawerRowView(
                     eq.getDisplayName(),
                     android.R.drawable.ic_media_next,
+                    resolveAlbumArtUrl(eq),
                     selectedPresetIds.contains(eq.getId()),
                     v -> onPresetRowClicked(eq),
                     v -> onPresetRowLongClicked(eq)
@@ -412,13 +421,69 @@ public class EqualizerEditorFragment extends Fragment {
      */
     private View buildDrawerRowView(String title, int iconRes, boolean checked,
                                     View.OnClickListener onClick, View.OnLongClickListener onLongClick) {
+        return buildDrawerRowView(title, iconRes, null, 0f, checked, onClick, onLongClick);
+    }
+
+    /**
+     * Same as above, plus a rotation for the row icon - used for the folder
+     * disclosure chevron, which points right when collapsed and rotates to
+     * point down once expanded, rather than swapping between two drawables.
+     */
+    private View buildDrawerRowView(String title, int iconRes, float iconRotationDegrees, boolean checked,
+                                    View.OnClickListener onClick, View.OnLongClickListener onLongClick) {
+        return buildDrawerRowView(title, iconRes, null, iconRotationDegrees, checked, onClick, onLongClick);
+    }
+
+    /**
+     * Same as above, plus a real album art URL - used for song presets
+     * imported from a Spotify playlist (see SpotifyWebApiClient.SpotifyTrack
+     * and importTracksIntoFolder). Null falls back to fallbackIconRes, same
+     * as every other preset row (manually-created presets never have art).
+     */
+    private View buildDrawerRowView(String title, int fallbackIconRes, String albumArtUrl, boolean checked,
+                                    View.OnClickListener onClick, View.OnLongClickListener onLongClick) {
+        return buildDrawerRowView(title, fallbackIconRes, albumArtUrl, 0f, checked, onClick, onLongClick);
+    }
+
+    /**
+     * Builds one full-width drawer row as a MenuItem's action view. This
+     * entirely replaces NavigationView's default item rendering (and the old
+     * small delete-button action view) with a view that handles its own tap
+     * and long-press directly - NavigationView's Menu API has no long-click
+     * callback of its own, so a custom view is the only way to detect one.
+     *
+     * When albumArtUrl is present, Glide loads it into the icon instead of
+     * fallbackIconRes - it decodes straight to the ImageView's fixed 24dp
+     * size (never holds a full-res bitmap in memory) and disk-caches the
+     * result, so repeat renders of the same row are free.
+     */
+    private View buildDrawerRowView(String title, int fallbackIconRes, String albumArtUrl, float iconRotationDegrees,
+                                    boolean checked, View.OnClickListener onClick, View.OnLongClickListener onLongClick) {
         View row = LayoutInflater.from(requireContext()).inflate(R.layout.menu_preset_row, null, false);
 
         ImageView icon = row.findViewById(R.id.row_icon);
         TextView titleView = row.findViewById(R.id.row_title);
         CheckBox checkbox = row.findViewById(R.id.row_checkbox);
 
-        icon.setImageResource(iconRes);
+        // menu_preset_row.xml applies app:tint at inflate time - captured
+        // here, before it's ever overwritten, so it can be restored for
+        // fallback icons after real (untinted) album art has been shown.
+        ColorStateList defaultIconTint = icon.getImageTintList();
+
+        if (albumArtUrl != null && !albumArtUrl.isEmpty()) {
+            // Real artwork shouldn't be forced into the monochrome icon tint.
+            icon.setImageTintList(null);
+            Glide.with(icon)
+                    .load(albumArtUrl)
+                    .placeholder(fallbackIconRes)
+                    .error(fallbackIconRes)
+                    .centerCrop()
+                    .into(icon);
+        } else {
+            icon.setImageTintList(defaultIconTint);
+            icon.setImageResource(fallbackIconRes);
+        }
+        icon.setRotation(iconRotationDegrees);
         titleView.setText(title);
         checkbox.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
         checkbox.setChecked(checked);
@@ -427,6 +492,12 @@ public class EqualizerEditorFragment extends Fragment {
         row.setOnLongClickListener(onLongClick);
 
         return row;
+    }
+
+    /** Follows linkedPresetId to find the real art owner, same as band levels. Null if eq has none (e.g. manually created). */
+    private String resolveAlbumArtUrl(SelectedEqualizer eq) {
+        SelectedEqualizer dataSource = resolveDataSource(eq);
+        return dataSource != null ? dataSource.getAlbumArtUrl() : null;
     }
 
     private void onFolderRowClicked(Folder folder) {
@@ -946,6 +1017,7 @@ public class EqualizerEditorFragment extends Fragment {
 
             SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, bandIds, initialLevels);
             eq.setFolderId(folder.getId());
+            eq.setAlbumArtUrl(track.albumArtUrl);
             if (existingMatch != null) {
                 eq.setLinkedPresetId(existingMatch.getId());
                 linked++;

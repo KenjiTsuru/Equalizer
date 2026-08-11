@@ -15,6 +15,7 @@ public class SelectedEqualizer {
     private String linkedPresetId; // null = this preset owns its own bandLevels;
     // otherwise it's a UI-only duplicate whose real
     // data lives on the preset with this id
+    private String albumArtUrl; // null unless imported from a Spotify playlist - see SpotifyWebApiClient.SpotifyTrack
 
     public SelectedEqualizer() {}
 
@@ -96,5 +97,13 @@ public class SelectedEqualizer {
 
     public void setLinkedPresetId(String linkedPresetId) {
         this.linkedPresetId = linkedPresetId;
+    }
+
+    public String getAlbumArtUrl() {
+        return albumArtUrl;
+    }
+
+    public void setAlbumArtUrl(String albumArtUrl) {
+        this.albumArtUrl = albumArtUrl;
     }
 }

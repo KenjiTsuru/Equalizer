@@ -30,6 +30,8 @@ public class MainActivity extends AppCompatActivity {
     private static final String CLIENT_ID = BuildConfig.SPOTIFY_CLIENT_ID;
     private static final String REDIRECT_URI = "com.example.autoeq://spotify-callback"; // Must match dashboard
     private static final int WEB_API_TOKEN_REQUEST_CODE = 1337;
+    private static final String PREFS_NAME = "autoeq_prefs";
+    private static final String PREF_BATTERY_OPT_REQUESTED = "battery_opt_requested";
 
     // Cached Web API token for the playlist-import feature. Separate from
     // SpotifyMonitorService's own App Remote connection - App Remote only
@@ -88,9 +90,19 @@ public class MainActivity extends AppCompatActivity {
     // already dead, it can't prevent the kill in the first place. This shows
     // the standard system "allow to run in background" prompt so the auto-
     // switching service actually stays alive.
+    //
+    // Only asked once ever, via the prefs flag below - if the user dismisses
+    // or denies it, we don't nag them again on every launch. They can still
+    // grant it later from Android's own battery settings if they change
+    // their mind.
     private void requestIgnoreBatteryOptimizationsIfNeeded() {
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (prefs.getBoolean(PREF_BATTERY_OPT_REQUESTED, false)) return;
+
         PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (powerManager == null || powerManager.isIgnoringBatteryOptimizations(getPackageName())) return;
+
+        prefs.edit().putBoolean(PREF_BATTERY_OPT_REQUESTED, true).apply();
 
         Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
         intent.setData(Uri.parse("package:" + getPackageName()));
