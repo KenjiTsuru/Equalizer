@@ -59,10 +59,13 @@ dependencies {
     implementation(libs.activity)
     implementation(libs.constraintlayout)
 
-    // Firebase
+    // Firebase - only Auth and the Realtime Database are actually used
+    // anywhere in the app (checked via grep across the whole source tree).
+    // Analytics and Firestore were both unreferenced dead weight: Analytics
+    // in particular runs its own background session/event collection and
+    // periodic upload, which is exactly the kind of always-on cost this app
+    // shouldn't be paying for when it's not doing anything.
     implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
-    implementation("com.google.firebase:firebase-analytics")
-    implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-database")
 

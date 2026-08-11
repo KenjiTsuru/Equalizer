@@ -122,6 +122,22 @@
                         app:layout_constraintStart_toStartOf="parent"
                         app:layout_constraintEnd_toEndOf="parent"/>
 
+                    <!-- Connected line + gradient fill + dots across all bands,
+                         drawn as one continuous graph instead of NUM_BANDS
+                         separate tracks. Sized to match eq_bands_row exactly
+                         (same constraints) and drawn behind it - the
+                         seekbars on top are fully transparent now (see
+                         equalizer_band_item.xml) and exist only to keep
+                         handling drag input exactly as before. -->
+                    <com.example.autoeq.EqualizerCurveView
+                        android:id="@+id/eq_curve_view"
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintEnd_toEndOf="parent" />
+
                     <!-- Bars -->
                     <LinearLayout
                         android:id="@+id/eq_bands_row"

@@ -17,6 +17,10 @@
         android:alpha="0.6"
         android:text="1 kHz" />
 
+    <!-- Invisible now (transparent track/thumb) - EqualizerCurveView draws
+         the actual line/gradient/dots underneath this. Still fully
+         functional: VerticalSeekBar's own touch handling (drag to set a
+         band's value) is untouched, this is purely a visual change. -->
     <com.example.autoeq.VerticalSeekBar
         android:id="@+id/eq_band_seekbar"
         android:layout_width="match_parent"
@@ -28,7 +32,7 @@
         android:thumbOffset="0dp"
         android:paddingStart="11dp"
         android:paddingEnd="11dp"
-        android:thumbTint="#A855F7"
-        android:progressDrawable="@drawable/seekbar_gradient" />
+        android:thumbTint="@android:color/transparent"
+        android:progressDrawable="@android:color/transparent" />
 
 </FrameLayout>

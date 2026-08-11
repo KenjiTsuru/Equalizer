@@ -9,7 +9,6 @@ public class SelectedEqualizer {
     private String name; // Can be Song Name or Genre Name
     private String artist; // Artist name (used if type is Song and Artist)
     private int type; // 0 for Song and Artist, 1 for Genre
-    private List<Integer> bandIds;
     private List<Integer> bandLevels;
     private String folderId; // null = top-level, not in any folder
     private String linkedPresetId; // null = this preset owns its own bandLevels;
@@ -19,11 +18,10 @@ public class SelectedEqualizer {
 
     public SelectedEqualizer() {}
 
-    public SelectedEqualizer(String name, String artist, int type, List<Integer> bandIds, List<Integer> bandLevels) {
+    public SelectedEqualizer(String name, String artist, int type, List<Integer> bandLevels) {
         this.name = name;
         this.artist = artist;
         this.type = type;
-        this.bandIds = bandIds;
         this.bandLevels = bandLevels;
     }
 
@@ -58,14 +56,6 @@ public class SelectedEqualizer {
 
     public void setType(int type) {
         this.type = type;
-    }
-
-    public List<Integer> getBandIds() {
-        return bandIds;
-    }
-
-    public void setBandIds(List<Integer> bandIds) {
-        this.bandIds = bandIds;
     }
 
     public List<Integer> getBandLevels() {

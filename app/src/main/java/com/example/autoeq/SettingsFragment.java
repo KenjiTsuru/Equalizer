@@ -41,15 +41,25 @@ public class SettingsFragment extends Fragment {
     }
 
     private void performLogout() {
-        // 1. Log out from Firebase
+        // 1. Stop the always-on background service. Without this it kept
+        // running indefinitely after logout - still holding the system-wide
+        // EQ audio effect, the Spotify App Remote connection, and a Firebase
+        // listener now pointed at a signed-out user - since nothing else in
+        // the app ever stops it once started.
+        requireContext().stopService(new Intent(requireContext(), SpotifyMonitorService.class));
+
+        // 2. Log out from Firebase
         FirebaseAuth.getInstance().signOut();
 
-        // 2. Navigate to LoginActivity and clear the activity stack
+        // 3. Navigate to LoginActivity and clear the activity stack
         Intent intent = new Intent(requireContext(), LoginActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(intent);
 
-        // 3. Close the current activity
+        // 4. Close the current activity - this also tears down
+        // EqualizerEditorFragment (destroying it unbinds its ServiceConnection),
+        // which is what lets the stopService() call above actually finish
+        // destroying the service rather than being kept alive by that binding.
         if (getActivity() != null) {
             getActivity().finish();
         }

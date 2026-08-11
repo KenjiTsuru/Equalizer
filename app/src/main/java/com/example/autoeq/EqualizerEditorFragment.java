@@ -89,6 +89,7 @@ public class EqualizerEditorFragment extends Fragment {
     private SelectedEqualizer currentEq;
     private NavigationView navView;
     private LinearLayout bandsContainer;
+    private EqualizerCurveView curveView;
 
     // Firebase Data Handler reference replaces local indexing pools
     private EqualizerDataHandler dataHandler;
@@ -145,6 +146,7 @@ public class EqualizerEditorFragment extends Fragment {
         emptyStateText = view.findViewById(R.id.eq_empty_state_text);
         eqUiContainer = view.findViewById(R.id.equalizer_ui_container);
         bandsContainer = view.findViewById(R.id.eq_bands_row);
+        curveView = view.findViewById(R.id.eq_curve_view);
         presetNameText = view.findViewById(R.id.eq_preset_name);
         sharedTooltip = view.findViewById(R.id.eq_shared_tooltip);
 
@@ -859,16 +861,11 @@ public class EqualizerEditorFragment extends Fragment {
 
                     SelectedEqualizer existingMatch = findMatchingPreset(name, artist, type, presets);
 
-                    // Build modern dynamic generic collection arrays explicitly
-                    List<Integer> bandIds = new ArrayList<>();
-                    for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
-                        bandIds.add(i);
-                    }
                     List<Integer> initialLevels = existingMatch != null
                             ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
                             : zeroLevels();
 
-                    SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, bandIds, initialLevels);
+                    SelectedEqualizer eq = new SelectedEqualizer(name, artist, type, initialLevels);
                     eq.setFolderId(expandedFolderId);
                     if (existingMatch != null) {
                         eq.setLinkedPresetId(existingMatch.getId());
@@ -1090,15 +1087,11 @@ public class EqualizerEditorFragment extends Fragment {
         for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
             SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
 
-            List<Integer> bandIds = new ArrayList<>();
-            for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
-                bandIds.add(i);
-            }
             List<Integer> initialLevels = existingMatch != null
                     ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
                     : zeroLevels();
 
-            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, bandIds, initialLevels);
+            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
             eq.setFolderId(folder.getId());
             eq.setAlbumArtUrl(track.albumArtUrl);
             // Assigned up front (push keys are generated locally, no network
@@ -1188,6 +1181,10 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer.setClipChildren(false);
         bandsContainer.setClipToPadding(false);
 
+        if (curveView != null) {
+            curveView.setBandCount(EqBandConfig.NUM_BANDS);
+            curveView.setMaxProgress(SPAN);
+        }
 
         for (int band = 0; band < EqBandConfig.NUM_BANDS; band++) {
             final int finalBand = band;
@@ -1209,6 +1206,7 @@ public class EqualizerEditorFragment extends Fragment {
             sb.setMax(SPAN);
             int currentLevel = gainDbToLevel(systemEq.getPreEqBandByChannelIndex(0, finalBand).getGain());
             sb.setProgress(currentLevel - MIN_LEVEL);
+            if (curveView != null) curveView.setProgress(finalBand, currentLevel - MIN_LEVEL);
 
             if (label != null) {
                 label.setText(formatFrequencyLabel(EqBandConfig.BAND_FREQUENCIES_HZ[finalBand]));
@@ -1226,6 +1224,8 @@ public class EqualizerEditorFragment extends Fragment {
                     // onStopTrackingTouch isn't reliably called by every seekbar
                     // implementation, so saving doesn't depend on it firing.
                     int targetLevel = MIN_LEVEL + progress;
+
+                    if (curveView != null) curveView.setProgress(finalBand, progress);
 
                     if (systemEq != null) {
                         systemEq.setPreEqBandAllChannelsTo(finalBand,

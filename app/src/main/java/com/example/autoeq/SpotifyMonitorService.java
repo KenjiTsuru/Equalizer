@@ -163,6 +163,11 @@ public class SpotifyMonitorService extends Service {
         currentEq = eq;
         if (systemEq == null || eq == null) return;
 
+        // The effect starts disabled (see initSystemEqualizer) and stays that
+        // way until there's actually a preset to apply - covers both an auto
+        // match from Spotify and a manual pick from the drawer.
+        systemEq.setEnabled(true);
+
         List<Integer> levels = eq.getBandLevels();
         List<Integer> safeLevels = new ArrayList<>(EqBandConfig.NUM_BANDS);
         for (int i = 0; i < EqBandConfig.NUM_BANDS; i++) {
@@ -184,7 +189,12 @@ public class SpotifyMonitorService extends Service {
                     .build();
 
             systemEq = new DynamicsProcessing(0, 0, config);
-            systemEq.setEnabled(true);
+            // Left disabled until applyPreset actually has gains to apply -
+            // this is a system-wide effect on every app's audio (session 0),
+            // so enabling it here unconditionally meant it was actively
+            // processing all device audio, 24/7, from the moment the app was
+            // ever opened, even with nothing playing and every band at 0dB.
+            systemEq.setEnabled(false);
 
             for (int b = 0; b < EqBandConfig.NUM_BANDS; b++) {
                 systemEq.setPreEqBandAllChannelsTo(b,
