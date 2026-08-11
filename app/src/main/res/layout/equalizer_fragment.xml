@@ -33,7 +33,7 @@
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="Settings"
                         app:tint="?attr/colorOnSurface"
-                        android:src="@android:drawable/ic_menu_preferences"
+                        android:src="@drawable/ic_settings_gear"
                         app:layout_constraintTop_toTopOf="parent"
                         app:layout_constraintBottom_toBottomOf="parent"
                         app:layout_constraintEnd_toEndOf="parent" />
@@ -43,6 +43,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginEnd="12dp"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint"
                         app:layout_constraintTop_toTopOf="parent"
                         app:layout_constraintBottom_toBottomOf="parent"
                         app:layout_constraintEnd_toStartOf="@id/eq_settings_button" />

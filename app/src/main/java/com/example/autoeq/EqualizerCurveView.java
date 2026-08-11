@@ -9,6 +9,8 @@ import android.graphics.Shader;
 import android.util.AttributeSet;
 import android.view.View;
 
+import androidx.core.content.ContextCompat;
+
 import com.google.android.material.color.MaterialColors;
 
 /**
@@ -23,8 +25,11 @@ import com.google.android.material.color.MaterialColors;
  */
 public class EqualizerCurveView extends View {
 
-    private static final int ACCENT = 0xFFA855F7; // same purple used elsewhere for this screen's EQ UI
-    private static final int ACCENT_STROKE = 0xFF710193; // dark end of the old per-band seekbar gradient
+    // Resolved from R.color.eq_accent/eq_accent_dark in init() rather than
+    // hardcoded here - single source of truth shared with the drawer header
+    // buttons and the power switch, so they can never drift out of sync.
+    private int accentColor;
+    private int accentStrokeColor;
 
     private int bandCount = EqBandConfig.NUM_BANDS;
     private int maxProgress = 1;
@@ -64,20 +69,23 @@ public class EqualizerCurveView extends View {
     private void init() {
         setWillNotDraw(false);
 
+        accentColor = ContextCompat.getColor(getContext(), R.color.eq_accent);
+        accentStrokeColor = ContextCompat.getColor(getContext(), R.color.eq_accent_dark);
+
         linePaint.setStyle(Paint.Style.STROKE);
         linePaint.setStrokeWidth(lineWidthPx);
         linePaint.setStrokeJoin(Paint.Join.ROUND);
         linePaint.setStrokeCap(Paint.Cap.ROUND);
-        linePaint.setColor(ACCENT);
+        linePaint.setColor(accentColor);
 
         fillPaint.setStyle(Paint.Style.FILL);
 
         dotPaint.setStyle(Paint.Style.FILL);
-        dotPaint.setColor(ACCENT);
+        dotPaint.setColor(accentColor);
 
         dotStrokePaint.setStyle(Paint.Style.STROKE);
         dotStrokePaint.setStrokeWidth(dotStrokeWidthPx);
-        dotStrokePaint.setColor(ACCENT_STROKE);
+        dotStrokePaint.setColor(accentStrokeColor);
 
         // Faint per-band column guides - the seekbars occupying these
         // columns have no visible track anymore (see equalizer_band_item.xml),
@@ -136,7 +144,7 @@ public class EqualizerCurveView extends View {
         // change since it doesn't depend on the current values.
         fillPaint.setShader(new LinearGradient(
                 0, verticalInsetPx, 0, h,
-                withAlpha(ACCENT, 160), withAlpha(ACCENT, 0),
+                withAlpha(accentColor, 160), withAlpha(accentColor, 0),
                 Shader.TileMode.CLAMP));
     }
 

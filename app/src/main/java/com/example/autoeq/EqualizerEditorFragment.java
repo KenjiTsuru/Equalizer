@@ -1263,18 +1263,21 @@ public class EqualizerEditorFragment extends Fragment {
 
     /**
      * Moves the single shared dB tooltip to sit beside whichever band is
-     * currently being dragged - to the right of it, except for the leftmost
-     * band, which shows it on the left instead. Doesn't track the thumb's
-     * vertical position; it's centered on the band's height once per drag,
-     * since the user's own finger covers the thumb while dragging anyway.
+     * currently being dragged - to the right of it by default, except for
+     * the rightmost band, which shows it on the left (inner) side instead
+     * so it doesn't run off the edge of the screen. The leftmost band needs
+     * no special case: showing it on the right already keeps it on-screen.
+     * Doesn't track the thumb's vertical position; it's centered on the
+     * band's height once per drag, since the user's own finger covers the
+     * thumb while dragging anyway.
      */
     private void positionSharedTooltip(View bandView) {
         if (sharedTooltip == null || bandsContainer == null) return;
 
-        boolean isLeftmostBand = bandsContainer.indexOfChild(bandView) == 0;
+        boolean isRightmostBand = bandsContainer.indexOfChild(bandView) == bandsContainer.getChildCount() - 1;
         float bandLeftInGraph = bandsContainer.getX() + bandView.getX();
 
-        float targetX = isLeftmostBand
+        float targetX = isRightmostBand
                 ? bandLeftInGraph - sharedTooltip.getWidth()
                 : bandLeftInGraph + bandView.getWidth();
         float targetY = bandsContainer.getY() + bandView.getY()

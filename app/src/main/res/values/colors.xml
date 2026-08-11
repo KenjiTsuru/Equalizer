@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- The app's one brand accent, used consistently across the EQ graph
+         (EqualizerCurveView), the drawer header buttons, and the power
+         switch - previously some of those hardcoded a different, darker
+         purple (#800080) instead of this one. -->
+    <color name="eq_accent">#A855F7</color>
+    <color name="eq_accent_dark">#710193</color>
 </resources>
