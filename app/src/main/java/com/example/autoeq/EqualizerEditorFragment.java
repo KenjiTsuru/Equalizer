@@ -150,7 +150,7 @@ public class EqualizerEditorFragment extends Fragment {
         presetNameText = view.findViewById(R.id.eq_preset_name);
         sharedTooltip = view.findViewById(R.id.eq_shared_tooltip);
 
-        toolbar.setNavigationIcon(android.R.drawable.ic_menu_sort_by_size);
+        toolbar.setNavigationIcon(R.drawable.ic_hamburger_menu);
         toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
 
         View headerView = navView.getHeaderView(0);
