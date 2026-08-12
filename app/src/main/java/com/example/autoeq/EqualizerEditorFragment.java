@@ -35,9 +35,11 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public class EqualizerEditorFragment extends Fragment {
@@ -111,6 +113,8 @@ public class EqualizerEditorFragment extends Fragment {
     private final Set<String> selectedFolderIds = new HashSet<>();
 
     private SpotifyWebApiClient spotifyWebApiClient;
+    private LastFmApiClient lastFmApiClient;
+    private DiscogsApiClient discogsApiClient;
 
     private View emptyStateText;
     private View eqUiContainer;
@@ -1017,9 +1021,33 @@ public class EqualizerEditorFragment extends Fragment {
                         Toast.makeText(requireContext(), "No playlists selected", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    importPlaylists(accessToken, selected);
+                    showGenreEqPromptDialog(accessToken, selected);
                 })
                 .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /**
+     * Asked once per import batch, right before the actual fetch starts.
+     * "Yes" looks up each imported song's genre (via Last.fm's per-track
+     * tags - see LastFmApiClient for why Spotify's own artist genres aren't
+     * used) and seeds new presets from the matching GenrePresets bucket
+     * instead of flat zero; "No" (or no match found for a given song) keeps
+     * today's behavior. Either way every preset stays fully editable after.
+     */
+    private void showGenreEqPromptDialog(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists) {
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Apply genre EQ?")
+                .setMessage("Start each song's preset from a generic equalizer matched to its own genre, instead of flat? Songs with no genre match default to flat either way, and you can still edit any preset afterward.")
+                .setNegativeButton("No", (dialog, which) -> importPlaylists(accessToken, playlists, false))
+                .setPositiveButton("Yes", (dialog, which) -> {
+                    if (BuildConfig.LASTFM_API_KEY == null || BuildConfig.LASTFM_API_KEY.isEmpty()) {
+                        Toast.makeText(requireContext(), "LASTFM_API_KEY is not set in local.properties - importing without genre EQ", Toast.LENGTH_LONG).show();
+                        importPlaylists(accessToken, playlists, false);
+                        return;
+                    }
+                    importPlaylists(accessToken, playlists, true);
+                })
                 .show();
     }
 
@@ -1028,9 +1056,63 @@ public class EqualizerEditorFragment extends Fragment {
         void onComplete(int created, int linked);
     }
 
-    private void importPlaylists(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists) {
+    /**
+     * Aggregated across the whole import batch so the results can report
+     * Last.fm's own tag coverage directly - whether nothing matched because
+     * Last.fm had no tags for these songs, vs. had tags but none of them
+     * were genre-like, vs. matched fine. That distinction is the whole
+     * point: it tells the user (and me, without needing a logcat pull)
+     * whether a "still flat" report is this app's bug, missing data
+     * upstream, or a GenrePresets bucket that needs adding.
+     */
+    private static final class GenreMatchStats {
+        int songsChecked;
+        int songsWithTagData;
+        int songsMatched;
+        // Subset of songsWithTagData/songsMatched whose tags came from the
+        // Discogs fallback (only tried when Last.fm had nothing) rather than
+        // Last.fm directly - lets the results dialog show whether the
+        // fallback is actually pulling its weight.
+        int songsResolvedViaDiscogs;
+        // Name + artist + raw tags for every song that had tag data but
+        // matched no bucket - shown directly in the results dialog instead of
+        // relying on logcat, which several real devices (this one included)
+        // filter aggressively for third-party apps regardless of log level.
+        final List<String> unmatchedWithTags = new ArrayList<>();
+
+        String summarize() {
+            StringBuilder sb = new StringBuilder("Matched ")
+                    .append(songsMatched).append("/").append(songsChecked).append(" songs to a genre.");
+            if (songsResolvedViaDiscogs > 0) {
+                sb.append(" (").append(songsResolvedViaDiscogs).append(" via the Discogs fallback.)");
+            }
+            int noData = songsChecked - songsWithTagData;
+            if (noData > 0) {
+                sb.append("\n\n").append(noData).append(" song").append(noData == 1 ? "" : "s")
+                        .append(" had no tag data from Last.fm or Discogs.");
+            }
+            if (!unmatchedWithTags.isEmpty()) {
+                sb.append("\n\n").append(unmatchedWithTags.size()).append(" song").append(unmatchedWithTags.size() == 1 ? "" : "s")
+                        .append(" had tags, but none matched a genre preset:");
+                for (String entry : unmatchedWithTags) {
+                    sb.append("\n• ").append(entry);
+                }
+            }
+            return sb.toString();
+        }
+    }
+
+    private void importPlaylists(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists, boolean applyGenreEq) {
         showProgressDialog("Importing " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s") + "...");
-        importPlaylistsSequentially(accessToken, playlists, 0, new int[2]);
+        importPlaylistsSequentially(accessToken, playlists, 0, new int[2], applyGenreEq, new GenreMatchStats());
+    }
+
+    private void showGenreMatchResultsDialog(GenreMatchStats genreStats) {
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Genre EQ results")
+                .setMessage(genreStats.summarize())
+                .setPositiveButton("OK", null)
+                .show();
     }
 
     /**
@@ -1042,7 +1124,7 @@ public class EqualizerEditorFragment extends Fragment {
      * for the single summary toast shown once the whole batch finishes.
      */
     private void importPlaylistsSequentially(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists,
-                                              int index, int[] totals) {
+                                              int index, int[] totals, boolean applyGenreEq, GenreMatchStats genreStats) {
         if (index >= playlists.size()) {
             if (!isAdded()) return;
             dismissProgressDialog();
@@ -1052,6 +1134,11 @@ public class EqualizerEditorFragment extends Fragment {
                             + " from " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s")
                             + (totals[1] > 0 ? " (" + totals[1] + " linked to existing presets)" : ""),
                     Toast.LENGTH_LONG).show();
+            // A toast can't reliably show more than a line or two - the genre
+            // breakdown needs its own dialog instead, which has no such limit.
+            if (applyGenreEq && genreStats.songsChecked > 0) {
+                showGenreMatchResultsDialog(genreStats);
+            }
             return;
         }
 
@@ -1062,14 +1149,20 @@ public class EqualizerEditorFragment extends Fragment {
         ImportCompletionCallback next = (created, linked) -> {
             totals[0] += created;
             totals[1] += linked;
-            importPlaylistsSequentially(accessToken, playlists, index + 1, totals);
+            importPlaylistsSequentially(accessToken, playlists, index + 1, totals, applyGenreEq, genreStats);
         };
 
         spotifyWebApiClient.fetchPlaylistTracks(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
             @Override
             public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
                 if (!isAdded() || getActivity() == null) return;
-                getActivity().runOnUiThread(() -> finishPlaylistImport(playlist, tracks, next));
+                getActivity().runOnUiThread(() -> {
+                    if (applyGenreEq) {
+                        matchTrackGenresThenFinish(playlist, tracks, progressPrefix, genreStats, next);
+                    } else {
+                        finishPlaylistImport(playlist, tracks, null, next);
+                    }
+                });
             }
 
             @Override
@@ -1089,8 +1182,126 @@ public class EqualizerEditorFragment extends Fragment {
         });
     }
 
+    /**
+     * Looks up each track's own genre via Last.fm (per-song, not per-artist
+     * - see LastFmApiClient for why) and matches it to a GenrePresets
+     * bucket, one song at a time. Repeated (artist, track) pairs within the
+     * same playlist share one lookup instead of hitting Last.fm twice.
+     * LastFmApiClient.fetchTrackTags never fails outright - a lookup
+     * problem just resolves to an empty tag list - so there's nothing here
+     * to retry or abort on, unlike the old Spotify per-artist version.
+     */
+    private void matchTrackGenresThenFinish(SpotifyWebApiClient.SpotifyPlaylist playlist,
+                                             List<SpotifyWebApiClient.SpotifyTrack> tracks, String progressPrefix,
+                                             GenreMatchStats genreStats, ImportCompletionCallback onComplete) {
+        if (lastFmApiClient == null) {
+            lastFmApiClient = new LastFmApiClient();
+        }
+        if (discogsApiClient == null) {
+            discogsApiClient = new DiscogsApiClient();
+        }
+        matchTrackGenresOneByOne(playlist, tracks, 0, new HashMap<>(), new HashMap<>(), progressPrefix, genreStats, onComplete);
+    }
+
+    /** Tags plus which source they came from, so cached repeats still count toward GenreMatchStats.songsResolvedViaDiscogs correctly. */
+    private static final class TagLookupResult {
+        final List<String> tags;
+        final boolean fromDiscogs;
+        TagLookupResult(List<String> tags, boolean fromDiscogs) {
+            this.tags = tags;
+            this.fromDiscogs = fromDiscogs;
+        }
+    }
+
+    private interface TagLookupCallback {
+        void onResult(TagLookupResult result);
+    }
+
+    private void matchTrackGenresOneByOne(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
+                                           int index, Map<String, TagLookupResult> tagCache, Map<String, int[]> levelsByTrackKey,
+                                           String progressPrefix, GenreMatchStats genreStats, ImportCompletionCallback onComplete) {
+        if (index >= tracks.size()) {
+            finishPlaylistImport(playlist, tracks, levelsByTrackKey, onComplete);
+            return;
+        }
+
+        SpotifyWebApiClient.SpotifyTrack track = tracks.get(index);
+        String key = trackKey(track);
+        updateProgressDialog(progressPrefix + "Matching genres for \"" + playlist.name + "\" (" + index + "/" + tracks.size() + ")...",
+                index, tracks.size());
+
+        if (tagCache.containsKey(key)) {
+            recordTrackMatch(track, key, tagCache.get(key), levelsByTrackKey, genreStats);
+            // Posted rather than called directly - a run of cached hits (the
+            // same song repeated many times in one playlist) would otherwise
+            // recurse straight down the call stack instead of trampolining
+            // through the message queue like the network path naturally does.
+            if (isAdded() && getActivity() != null) {
+                getActivity().runOnUiThread(() -> matchTrackGenresOneByOne(
+                        playlist, tracks, index + 1, tagCache, levelsByTrackKey, progressPrefix, genreStats, onComplete));
+            }
+            return;
+        }
+
+        fetchTagsWithDiscogsFallback(track, result -> {
+            tagCache.put(key, result);
+            recordTrackMatch(track, key, result, levelsByTrackKey, genreStats);
+            matchTrackGenresOneByOne(playlist, tracks, index + 1, tagCache, levelsByTrackKey, progressPrefix, genreStats, onComplete);
+        });
+    }
+
+    /**
+     * Last.fm first (fast, generous rate limit); Discogs only if Last.fm had
+     * literally nothing, since Discogs' 60/min limit makes it too slow to use
+     * for every song. Both clients already resolve to an empty list on any
+     * failure, so this never needs its own failure branch.
+     */
+    private void fetchTagsWithDiscogsFallback(SpotifyWebApiClient.SpotifyTrack track, TagLookupCallback callback) {
+        lastFmApiClient.fetchTrackTags(BuildConfig.LASTFM_API_KEY, track.artist, track.name, lastFmTags -> {
+            if (!isAdded() || getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                if ((lastFmTags != null && !lastFmTags.isEmpty()) || BuildConfig.DISCOGS_TOKEN.isEmpty()) {
+                    callback.onResult(new TagLookupResult(lastFmTags, false));
+                    return;
+                }
+                discogsApiClient.fetchGenreTags(BuildConfig.DISCOGS_TOKEN, track.artist, track.name, discogsTags -> {
+                    if (!isAdded() || getActivity() == null) return;
+                    getActivity().runOnUiThread(() -> callback.onResult(new TagLookupResult(discogsTags, true)));
+                });
+            });
+        });
+    }
+
+    private void recordTrackMatch(SpotifyWebApiClient.SpotifyTrack track, String key, TagLookupResult result,
+                                   Map<String, int[]> levelsByTrackKey, GenreMatchStats genreStats) {
+        List<String> tags = result.tags;
+        genreStats.songsChecked++;
+        boolean hasTags = tags != null && !tags.isEmpty();
+        if (hasTags) genreStats.songsWithTagData++;
+        String genreName = GenrePresets.matchTags(tags);
+        // Log.i, not Log.d - plenty of real devices default their global log
+        // level to INFO and silently drop DEBUG-priority lines at the logd
+        // daemon itself. Kept as a secondary source only - unmatchedWithTags
+        // below is the primary one, since some devices filter third-party app
+        // logs regardless of level and logcat access isn't guaranteed at all.
+        Log.i("GENRE_MATCH", "track=" + key + " source=" + (result.fromDiscogs ? "discogs" : "lastfm")
+                + " tags=" + tags + " -> " + (genreName != null ? genreName : "no match"));
+        if (genreName != null) {
+            levelsByTrackKey.put(key, GenrePresets.bandLevelsFor(genreName));
+            genreStats.songsMatched++;
+            if (result.fromDiscogs) genreStats.songsResolvedViaDiscogs++;
+        } else if (hasTags) {
+            genreStats.unmatchedWithTags.add(track.name + " - " + track.artist
+                    + " (" + (result.fromDiscogs ? "discogs: " : "lastfm: ") + tags + ")");
+        }
+    }
+
+    private static String trackKey(SpotifyWebApiClient.SpotifyTrack track) {
+        return track.artist.toLowerCase(Locale.US) + "||" + track.name.toLowerCase(Locale.US);
+    }
+
     private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
-                                       ImportCompletionCallback onComplete) {
+                                       Map<String, int[]> genreLevelsByTrackKey, ImportCompletionCallback onComplete) {
         if (dataHandler == null) {
             dataHandler = new EqualizerDataHandler();
         }
@@ -1112,7 +1323,7 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onSuccess() {
                 if (isAdded() && getActivity() != null) {
-                    getActivity().runOnUiThread(() -> importTracksIntoFolder(finalFolder, tracks, onComplete));
+                    getActivity().runOnUiThread(() -> importTracksIntoFolder(finalFolder, tracks, genreLevelsByTrackKey, onComplete));
                 }
             }
 
@@ -1134,7 +1345,8 @@ public class EqualizerEditorFragment extends Fragment {
      * listener, and each fire rebuilds the entire drawer menu from scratch -
      * for N tracks that's N full rebuilds instead of one.
      */
-    private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks, ImportCompletionCallback onComplete) {
+    private void importTracksIntoFolder(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks,
+                                         Map<String, int[]> genreLevelsByTrackKey, ImportCompletionCallback onComplete) {
         updateProgressDialog("Saving " + tracks.size() + " song" + (tracks.size() == 1 ? "" : "s")
                 + " into \"" + folder.getName() + "\"...", 0, 0);
 
@@ -1149,9 +1361,13 @@ public class EqualizerEditorFragment extends Fragment {
         for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
             SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
 
-            List<Integer> initialLevels = existingMatch != null
-                    ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
-                    : zeroLevels();
+            List<Integer> initialLevels;
+            if (existingMatch != null) {
+                initialLevels = new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()));
+            } else {
+                int[] genreLevels = genreLevelsByTrackKey != null ? genreLevelsByTrackKey.get(trackKey(track)) : null;
+                initialLevels = genreLevels != null ? toLevelList(genreLevels) : zeroLevels();
+            }
 
             SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
             eq.setFolderId(folder.getId());
@@ -1227,6 +1443,13 @@ public class EqualizerEditorFragment extends Fragment {
 
     private static List<Integer> nonNullLevels(List<Integer> levels) {
         return levels != null ? levels : zeroLevels();
+    }
+
+    /** Copies a GenrePresets band array into a mutable, independent List<Integer> - each imported preset needs its own list, not a shared reference. */
+    private static List<Integer> toLevelList(int[] levels) {
+        List<Integer> list = new ArrayList<>(levels.length);
+        for (int level : levels) list.add(level);
+        return list;
     }
 
     private void buildBandUiFromSystemEqualizer() {

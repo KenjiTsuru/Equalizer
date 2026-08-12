@@ -28,4 +28,17 @@
         android:textColor="#FFFFFF"
         android:textSize="16sp" />
 
+    <!-- Testing-only: lists every genre bucket GenrePresets has a premade EQ for. -->
+    <Button
+        android:id="@+id/btn_view_genre_presets"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_above="@id/btn_logout"
+        android:layout_marginBottom="16dp"
+        android:backgroundTint="#A855F7"
+        android:text="View Genre Presets"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
+
 </RelativeLayout>

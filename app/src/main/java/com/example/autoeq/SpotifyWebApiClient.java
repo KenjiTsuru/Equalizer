@@ -195,8 +195,8 @@ public class SpotifyWebApiClient {
                                     ? track.get("name").getAsString() : null;
                             JsonArray artists = track.getAsJsonArray("artists");
                             String artist = (artists != null && artists.size() > 0)
-                                    ? artists.get(0).getAsJsonObject().get("name").getAsString()
-                                    : null;
+                                    && artists.get(0).getAsJsonObject().has("name")
+                                    ? artists.get(0).getAsJsonObject().get("name").getAsString() : null;
                             String albumArtUrl = extractSmallestAlbumArtUrl(track);
 
                             if (name != null && artist != null) {
@@ -221,4 +221,5 @@ public class SpotifyWebApiClient {
             }
         });
     }
+
 }

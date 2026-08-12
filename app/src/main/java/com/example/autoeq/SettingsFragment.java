@@ -10,7 +10,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.firebase.auth.FirebaseAuth;
+
+import java.util.List;
 
 public class SettingsFragment extends Fragment {
 
@@ -24,7 +27,22 @@ public class SettingsFragment extends Fragment {
             logoutBtn.setOnClickListener(v -> showLogoutConfirmation());
         }
 
+        Button viewGenrePresetsBtn = view.findViewById(R.id.btn_view_genre_presets);
+        if (viewGenrePresetsBtn != null) {
+            viewGenrePresetsBtn.setOnClickListener(v -> showGenrePresetsDialog());
+        }
+
         return view;
+    }
+
+    /** Testing-only: lists every genre GenrePresets has a premade EQ curve for, so the bucket list/matching can be sanity-checked before relying on it during import. */
+    private void showGenrePresetsDialog() {
+        List<String> names = GenrePresets.allGenreNames();
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Genre Presets (" + names.size() + ")")
+                .setItems(names.toArray(new String[0]), null)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     private void showLogoutConfirmation() {

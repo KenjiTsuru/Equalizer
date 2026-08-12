@@ -32,6 +32,16 @@ android {
             "SPOTIFY_CLIENT_ID",
             "\"${localProperties.getProperty("SPOTIFY_CLIENT_ID", "")}\""
         )
+        buildConfigField(
+            "String",
+            "LASTFM_API_KEY",
+            "\"${localProperties.getProperty("LASTFM_API_KEY", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "DISCOGS_TOKEN",
+            "\"${localProperties.getProperty("DISCOGS_TOKEN", "")}\""
+        )
     }
 
     buildFeatures {
