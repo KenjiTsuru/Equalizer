@@ -1069,27 +1069,36 @@ public class EqualizerEditorFragment extends Fragment {
         int songsChecked;
         int songsWithTagData;
         int songsMatched;
-        // Subset of songsWithTagData/songsMatched whose tags came from the
-        // Discogs fallback (only tried when Last.fm had nothing) rather than
-        // Last.fm directly - lets the results dialog show whether the
-        // fallback is actually pulling its weight.
-        int songsResolvedViaDiscogs;
-        // Name + artist + raw tags for every song that had tag data but
-        // matched no bucket - shown directly in the results dialog instead of
-        // relying on logcat, which several real devices (this one included)
-        // filter aggressively for third-party apps regardless of log level.
+        // Which tier of the track -> album -> artist -> Discogs fallback
+        // chain (see fetchTagsWithFallbackChain) resolved each match - lets
+        // the results dialog show whether the later, more expensive tiers
+        // are actually pulling their weight.
+        int matchedViaTrackTags;
+        int matchedViaAlbumTags;
+        int matchedViaArtistTags;
+        int matchedViaDiscogs;
+        // Name + artist + source + raw tags for every song that had tag data
+        // but matched no bucket - shown directly in the results dialog
+        // instead of relying on logcat, which several real devices (this one
+        // included) filter aggressively for third-party apps regardless of
+        // log level.
         final List<String> unmatchedWithTags = new ArrayList<>();
 
         String summarize() {
             StringBuilder sb = new StringBuilder("Matched ")
                     .append(songsMatched).append("/").append(songsChecked).append(" songs to a genre.");
-            if (songsResolvedViaDiscogs > 0) {
-                sb.append(" (").append(songsResolvedViaDiscogs).append(" via the Discogs fallback.)");
+            if (songsMatched > 0) {
+                List<String> breakdown = new ArrayList<>();
+                if (matchedViaTrackTags > 0) breakdown.add(matchedViaTrackTags + " by track");
+                if (matchedViaAlbumTags > 0) breakdown.add(matchedViaAlbumTags + " by album");
+                if (matchedViaArtistTags > 0) breakdown.add(matchedViaArtistTags + " by artist");
+                if (matchedViaDiscogs > 0) breakdown.add(matchedViaDiscogs + " via Discogs");
+                sb.append(" (").append(String.join(", ", breakdown)).append(")");
             }
             int noData = songsChecked - songsWithTagData;
             if (noData > 0) {
                 sb.append("\n\n").append(noData).append(" song").append(noData == 1 ? "" : "s")
-                        .append(" had no tag data from Last.fm or Discogs.");
+                        .append(" had no tag data from any source.");
             }
             if (!unmatchedWithTags.isEmpty()) {
                 sb.append("\n\n").append(unmatchedWithTags.size()).append(" song").append(unmatchedWithTags.size() == 1 ? "" : "s")
@@ -1203,13 +1212,13 @@ public class EqualizerEditorFragment extends Fragment {
         matchTrackGenresOneByOne(playlist, tracks, 0, new HashMap<>(), new HashMap<>(), progressPrefix, genreStats, onComplete);
     }
 
-    /** Tags plus which source they came from, so cached repeats still count toward GenreMatchStats.songsResolvedViaDiscogs correctly. */
+    /** Tags plus which tier of the fallback chain they came from (null if none of the tiers found anything), so cached repeats still count toward GenreMatchStats correctly. */
     private static final class TagLookupResult {
         final List<String> tags;
-        final boolean fromDiscogs;
-        TagLookupResult(List<String> tags, boolean fromDiscogs) {
+        final String source; // "track" / "album" / "artist" / "discogs" / null
+        TagLookupResult(List<String> tags, String source) {
             this.tags = tags;
-            this.fromDiscogs = fromDiscogs;
+            this.source = source;
         }
     }
 
@@ -1243,7 +1252,7 @@ public class EqualizerEditorFragment extends Fragment {
             return;
         }
 
-        fetchTagsWithDiscogsFallback(track, result -> {
+        fetchTagsWithFallbackChain(track, result -> {
             tagCache.put(key, result);
             recordTrackMatch(track, key, result, levelsByTrackKey, genreStats);
             matchTrackGenresOneByOne(playlist, tracks, index + 1, tagCache, levelsByTrackKey, progressPrefix, genreStats, onComplete);
@@ -1251,25 +1260,64 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /**
-     * Last.fm first (fast, generous rate limit); Discogs only if Last.fm had
-     * literally nothing, since Discogs' 60/min limit makes it too slow to use
-     * for every song. Both clients already resolve to an empty list on any
-     * failure, so this never needs its own failure branch.
+     * Track tags first (most song-specific), then album, then artist (widest
+     * net, but also the least song-specific - an artist can span genres
+     * across their catalog, which is exactly why it's tried last), then
+     * Discogs as a last resort since its 60/min limit makes it too slow to
+     * use for every song. Every step only runs if the one before it came
+     * back completely empty. All the clients already resolve to an empty
+     * list on any failure, so this never needs its own failure branch.
      */
-    private void fetchTagsWithDiscogsFallback(SpotifyWebApiClient.SpotifyTrack track, TagLookupCallback callback) {
-        lastFmApiClient.fetchTrackTags(BuildConfig.LASTFM_API_KEY, track.artist, track.name, lastFmTags -> {
+    private void fetchTagsWithFallbackChain(SpotifyWebApiClient.SpotifyTrack track, TagLookupCallback callback) {
+        lastFmApiClient.fetchTrackTags(BuildConfig.LASTFM_API_KEY, track.artist, track.name, trackTags -> {
             if (!isAdded() || getActivity() == null) return;
             getActivity().runOnUiThread(() -> {
-                if ((lastFmTags != null && !lastFmTags.isEmpty()) || BuildConfig.DISCOGS_TOKEN.isEmpty()) {
-                    callback.onResult(new TagLookupResult(lastFmTags, false));
+                if (trackTags != null && !trackTags.isEmpty()) {
+                    callback.onResult(tagResult(trackTags, "track"));
+                } else {
+                    fetchAlbumTagsThenFallback(track, callback);
+                }
+            });
+        });
+    }
+
+    private void fetchAlbumTagsThenFallback(SpotifyWebApiClient.SpotifyTrack track, TagLookupCallback callback) {
+        if (track.album == null || track.album.isEmpty()) {
+            fetchArtistTagsThenFallback(track, callback);
+            return;
+        }
+        lastFmApiClient.fetchAlbumTags(BuildConfig.LASTFM_API_KEY, track.artist, track.album, albumTags -> {
+            if (!isAdded() || getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                if (albumTags != null && !albumTags.isEmpty()) {
+                    callback.onResult(tagResult(albumTags, "album"));
+                } else {
+                    fetchArtistTagsThenFallback(track, callback);
+                }
+            });
+        });
+    }
+
+    private void fetchArtistTagsThenFallback(SpotifyWebApiClient.SpotifyTrack track, TagLookupCallback callback) {
+        lastFmApiClient.fetchArtistTags(BuildConfig.LASTFM_API_KEY, track.artist, artistTags -> {
+            if (!isAdded() || getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                boolean hasArtistTags = artistTags != null && !artistTags.isEmpty();
+                if (hasArtistTags || BuildConfig.DISCOGS_TOKEN.isEmpty()) {
+                    callback.onResult(tagResult(artistTags, "artist"));
                     return;
                 }
                 discogsApiClient.fetchGenreTags(BuildConfig.DISCOGS_TOKEN, track.artist, track.name, discogsTags -> {
                     if (!isAdded() || getActivity() == null) return;
-                    getActivity().runOnUiThread(() -> callback.onResult(new TagLookupResult(discogsTags, true)));
+                    getActivity().runOnUiThread(() -> callback.onResult(tagResult(discogsTags, "discogs")));
                 });
             });
         });
+    }
+
+    /** source is only kept when tags actually has something - an empty result is source-less no matter which tier produced it. */
+    private static TagLookupResult tagResult(List<String> tags, String source) {
+        return new TagLookupResult(tags, (tags != null && !tags.isEmpty()) ? source : null);
     }
 
     private void recordTrackMatch(SpotifyWebApiClient.SpotifyTrack track, String key, TagLookupResult result,
@@ -1284,15 +1332,20 @@ public class EqualizerEditorFragment extends Fragment {
         // daemon itself. Kept as a secondary source only - unmatchedWithTags
         // below is the primary one, since some devices filter third-party app
         // logs regardless of level and logcat access isn't guaranteed at all.
-        Log.i("GENRE_MATCH", "track=" + key + " source=" + (result.fromDiscogs ? "discogs" : "lastfm")
+        Log.i("GENRE_MATCH", "track=" + key + " source=" + result.source
                 + " tags=" + tags + " -> " + (genreName != null ? genreName : "no match"));
         if (genreName != null) {
             levelsByTrackKey.put(key, GenrePresets.bandLevelsFor(genreName));
+            switch (result.source) {
+                case "track": genreStats.matchedViaTrackTags++; break;
+                case "album": genreStats.matchedViaAlbumTags++; break;
+                case "artist": genreStats.matchedViaArtistTags++; break;
+                case "discogs": genreStats.matchedViaDiscogs++; break;
+            }
             genreStats.songsMatched++;
-            if (result.fromDiscogs) genreStats.songsResolvedViaDiscogs++;
         } else if (hasTags) {
             genreStats.unmatchedWithTags.add(track.name + " - " + track.artist
-                    + " (" + (result.fromDiscogs ? "discogs: " : "lastfm: ") + tags + ")");
+                    + " (" + result.source + ": " + tags + ")");
         }
     }
 

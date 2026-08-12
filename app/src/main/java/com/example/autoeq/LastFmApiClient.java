@@ -19,13 +19,21 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 /**
- * Minimal client for Last.fm's track.gettoptags - stands in for Spotify's own
- * artist "genres" field (see GenrePresets), which is now flagged deprecated
- * by Spotify and empirically comes back empty for the large majority of real
- * artists (confirmed against a real playlist: 0/7 artists had any genre
- * data). Last.fm's tags are crowd-sourced per TRACK rather than per artist,
- * which also gets genre matching down to song granularity instead of
- * assuming every song by an artist shares one genre.
+ * Minimal client for Last.fm's *.gettoptags family - stands in for Spotify's
+ * own artist "genres" field (see GenrePresets), which is now flagged
+ * deprecated by Spotify and empirically comes back empty for the large
+ * majority of real artists (confirmed against a real playlist: 0/7 artists
+ * had any genre data).
+ *
+ * Three granularities, used as a fallback chain by EqualizerEditorFragment
+ * (track, then album, then artist, only moving on when the previous one
+ * came back empty) since a track with no tags of its own often still has an
+ * album or artist that does:
+ *  - fetchTrackTags: tags on that one specific song.
+ *  - fetchAlbumTags: tags on the album/EP it's from.
+ *  - fetchArtistTags: tags on the artist as a whole - the widest net, but
+ *    also the least song-specific (an artist can span genres across their
+ *    catalog), which is exactly why it's tried last, not first.
  *
  * Needs a free API key from https://www.last.fm/api/account/create (an
  * "Application name" is all that's required - no callback URL needed). This
@@ -38,37 +46,64 @@ public class LastFmApiClient {
     private static final String BASE_URL = "https://ws.audioscrobbler.com/2.0/";
     private final OkHttpClient httpClient = new OkHttpClient();
 
-    public interface TrackTagsCallback {
-        /** Always called, even on a network error, an API error, or a track Last.fm has no match for - tags is simply empty in every one of those cases, indistinguishable from a real "no tags" result. */
+    public interface TagsCallback {
+        /** Always called, even on a network error, an API error, or no match - tags is simply empty in every one of those cases, indistinguishable from a real "no tags" result. */
         void onResult(List<String> tags);
     }
 
-    /**
-     * GET track.gettoptags - the community tags for one specific song, most
-     * of which double as genre labels (e.g. "hip hop", "synthpop") mixed in
-     * with plenty of non-genre ones ("favorites", "2016", "female vocalists")
-     * - GenrePresets.matchTags simply won't match those against anything, so
-     * no separate filtering step is needed here. autocorrect=1 lets Last.fm
-     * fix minor spelling/formatting differences between what Spotify calls a
-     * track/artist and what Last.fm has on file.
-     */
-    public void fetchTrackTags(String apiKey, String artist, String track, TrackTagsCallback callback) {
-        HttpUrl base = HttpUrl.parse(BASE_URL);
-        HttpUrl url = base.newBuilder()
+    /** GET track.gettoptags - community tags for one specific song. */
+    public void fetchTrackTags(String apiKey, String artist, String track, TagsCallback callback) {
+        HttpUrl url = urlBuilder(apiKey)
                 .addQueryParameter("method", "track.gettoptags")
                 .addQueryParameter("artist", artist)
                 .addQueryParameter("track", track)
+                .build();
+        fetch(url, "track \"" + track + "\" by " + artist, callback);
+    }
+
+    /** GET album.gettoptags - community tags for the album/EP a song is from. */
+    public void fetchAlbumTags(String apiKey, String artist, String album, TagsCallback callback) {
+        HttpUrl url = urlBuilder(apiKey)
+                .addQueryParameter("method", "album.gettoptags")
+                .addQueryParameter("artist", artist)
+                .addQueryParameter("album", album)
+                .build();
+        fetch(url, "album \"" + album + "\" by " + artist, callback);
+    }
+
+    /** GET artist.gettoptags - community tags for the artist as a whole. */
+    public void fetchArtistTags(String apiKey, String artist, TagsCallback callback) {
+        HttpUrl url = urlBuilder(apiKey)
+                .addQueryParameter("method", "artist.gettoptags")
+                .addQueryParameter("artist", artist)
+                .build();
+        fetch(url, "artist " + artist, callback);
+    }
+
+    private static HttpUrl.Builder urlBuilder(String apiKey) {
+        // autocorrect=1 lets Last.fm fix minor spelling/formatting differences
+        // between what Spotify calls a track/album/artist and what Last.fm
+        // has on file.
+        return HttpUrl.parse(BASE_URL).newBuilder()
                 .addQueryParameter("api_key", apiKey)
                 .addQueryParameter("autocorrect", "1")
-                .addQueryParameter("format", "json")
-                .build();
+                .addQueryParameter("format", "json");
+    }
 
+    /**
+     * Shared request/response handling for all three *.gettoptags calls -
+     * tags returned mix genre labels ("hip hop", "synthpop") with plenty of
+     * non-genre ones ("favorites", "2016", "female vocalists");
+     * GenrePresets.matchTags simply won't match those against anything, so
+     * no separate filtering happens here.
+     */
+    private void fetch(HttpUrl url, String description, TagsCallback callback) {
         Request request = new Request.Builder().url(url).build();
 
         httpClient.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                Log.w(TAG, "Failed to fetch tags for \"" + track + "\" by " + artist, e);
+                Log.w(TAG, "Failed to fetch tags for " + description, e);
                 callback.onResult(new ArrayList<>());
             }
 
@@ -79,16 +114,16 @@ public class LastFmApiClient {
                     if (r.isSuccessful() && r.body() != null) {
                         JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();
                         if (body.has("error")) {
-                            Log.i(TAG, "No tags for \"" + track + "\" by " + artist + ": "
+                            Log.i(TAG, "No tags for " + description + ": "
                                     + (body.has("message") ? body.get("message").getAsString() : body.get("error").toString()));
                         } else {
                             collectTagNames(body.getAsJsonObject("toptags"), tags);
                         }
                     } else {
-                        Log.w(TAG, "Last.fm request failed for \"" + track + "\" by " + artist + ": HTTP " + r.code());
+                        Log.w(TAG, "Last.fm request failed for " + description + ": HTTP " + r.code());
                     }
                 } catch (Exception e) {
-                    Log.w(TAG, "Failed to parse tags for \"" + track + "\" by " + artist, e);
+                    Log.w(TAG, "Failed to parse tags for " + description, e);
                 }
                 callback.onResult(tags);
             }

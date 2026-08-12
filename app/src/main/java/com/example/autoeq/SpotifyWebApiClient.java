@@ -53,10 +53,12 @@ public class SpotifyWebApiClient {
     public static class SpotifyTrack {
         public final String name;
         public final String artist;
+        public final String album; // null if missing - used for the album-tier genre lookup, not just display
         public final String albumArtUrl; // smallest size Spotify offers (usually 64x64) - null if none present
-        public SpotifyTrack(String name, String artist, String albumArtUrl) {
+        public SpotifyTrack(String name, String artist, String album, String albumArtUrl) {
             this.name = name;
             this.artist = artist;
+            this.album = album;
             this.albumArtUrl = albumArtUrl;
         }
     }
@@ -155,6 +157,14 @@ public class SpotifyWebApiClient {
         return urlEl != null && !urlEl.isJsonNull() ? urlEl.getAsString() : null;
     }
 
+    private static String extractAlbumName(JsonObject track) {
+        JsonElement albumEl = track.get("album");
+        if (albumEl == null || !albumEl.isJsonObject()) return null;
+
+        JsonElement nameEl = albumEl.getAsJsonObject().get("name");
+        return nameEl != null && !nameEl.isJsonNull() ? nameEl.getAsString() : null;
+    }
+
     private void fetchTracksPage(String accessToken, String url, List<SpotifyTrack> collected, TracksCallback callback) {
         Request request = new Request.Builder()
                 .url(url)
@@ -197,10 +207,11 @@ public class SpotifyWebApiClient {
                             String artist = (artists != null && artists.size() > 0)
                                     && artists.get(0).getAsJsonObject().has("name")
                                     ? artists.get(0).getAsJsonObject().get("name").getAsString() : null;
+                            String album = extractAlbumName(track);
                             String albumArtUrl = extractSmallestAlbumArtUrl(track);
 
                             if (name != null && artist != null) {
-                                collected.add(new SpotifyTrack(name, artist, albumArtUrl));
+                                collected.add(new SpotifyTrack(name, artist, album, albumArtUrl));
                             }
                         }
                     }
