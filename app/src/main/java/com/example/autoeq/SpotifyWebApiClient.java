@@ -61,6 +61,29 @@ public class SpotifyWebApiClient {
         }
     }
 
+    /**
+     * Spotify error responses are {"error": {"status": ..., "message": "..."}}
+     * - the message is what actually explains a failure (e.g. "User not
+     * registered in the Developer Dashboard" for accounts not allow-listed
+     * on an app still in Development Mode), so surface it instead of just
+     * the bare status code. Falls back to the code alone if the body isn't
+     * that shape.
+     */
+    private static String describeError(Response r) {
+        String base = "HTTP " + r.code();
+        try {
+            String bodyStr = r.body() != null ? r.body().string() : null;
+            if (bodyStr == null || bodyStr.isEmpty()) return base;
+            JsonObject error = JsonParser.parseString(bodyStr).getAsJsonObject().getAsJsonObject("error");
+            if (error != null && error.has("message") && !error.get("message").isJsonNull()) {
+                return base + " (" + error.get("message").getAsString() + ")";
+            }
+        } catch (Exception ignored) {
+            // Body wasn't the expected {"error": {...}} shape - fall back to the bare code.
+        }
+        return base;
+    }
+
     /** GET /me/playlists - the current user's own playlists. */
     public void fetchUserPlaylists(String accessToken, PlaylistsCallback callback) {
         Request request = new Request.Builder()
@@ -79,7 +102,7 @@ public class SpotifyWebApiClient {
             public void onResponse(Call call, Response response) {
                 try (Response r = response) {
                     if (!r.isSuccessful() || r.body() == null) {
-                        callback.onFailure(new IOException("Spotify playlists request failed: " + r.code()));
+                        callback.onFailure(new IOException("Spotify playlists request failed: " + describeError(r)));
                         return;
                     }
                     JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();
@@ -149,7 +172,7 @@ public class SpotifyWebApiClient {
             public void onResponse(Call call, Response response) {
                 try (Response r = response) {
                     if (!r.isSuccessful() || r.body() == null) {
-                        callback.onFailure(new IOException("Spotify playlist tracks request failed: " + r.code()));
+                        callback.onFailure(new IOException("Spotify playlist tracks request failed: " + describeError(r)));
                         return;
                     }
                     JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();

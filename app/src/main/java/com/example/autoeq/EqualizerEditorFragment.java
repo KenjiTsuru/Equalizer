@@ -1,6 +1,7 @@
 package com.example.autoeq;
 
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.media.audiofx.DynamicsProcessing;
 import android.os.Bundle;
@@ -30,6 +31,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.navigation.NavigationView;
 
 import java.util.ArrayList;
@@ -803,7 +805,7 @@ public class EqualizerEditorFragment extends Fragment {
     /** The "+" button: choose what to add. */
     private void showCreateChooserDialog() {
         String[] options = {"New Preset", "New Folder", "Import Playlist"};
-        new AlertDialog.Builder(requireContext())
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
                 .setTitle("Add New")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) showCreateEqualizerDialog();
@@ -815,21 +817,27 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void showCreateEqualizerDialog() {
-        LinearLayout layout = new LinearLayout(requireContext());
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog);
+        // Views must be built from the builder's themed context, not the fragment's -
+        // otherwise the EditText/Spinner keep the default light styling (dark text
+        // on a now-dark background) even though the dialog chrome around them is themed.
+        Context dialogContext = builder.getContext();
+
+        LinearLayout layout = new LinearLayout(dialogContext);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(50, 40, 50, 10);
 
-        final EditText songNameInput = new EditText(requireContext());
+        final EditText songNameInput = new EditText(dialogContext);
         songNameInput.setHint("Song Name");
         layout.addView(songNameInput);
 
-        final EditText artistNameInput = new EditText(requireContext());
+        final EditText artistNameInput = new EditText(dialogContext);
         artistNameInput.setHint("Artist Name");
         layout.addView(artistNameInput);
 
-        final Spinner typeSpinner = new Spinner(requireContext());
+        final Spinner typeSpinner = new Spinner(dialogContext);
         String[] types = {"Song and Artist", "Genre"};
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_spinner_item, types);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(dialogContext, android.R.layout.simple_spinner_item, types);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         typeSpinner.setAdapter(adapter);
         layout.addView(typeSpinner);
@@ -848,8 +856,7 @@ public class EqualizerEditorFragment extends Fragment {
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Create your equalizer")
+        builder.setTitle("Create your equalizer")
                 .setView(layout)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Create", (dialog, which) -> {
@@ -901,11 +908,11 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     private void showCreateFolderDialog() {
-        final EditText folderNameInput = new EditText(requireContext());
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog);
+        final EditText folderNameInput = new EditText(builder.getContext());
         folderNameInput.setHint("Folder Name");
 
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Create Folder")
+        builder.setTitle("Create Folder")
                 .setView(folderNameInput)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Create", (dialog, which) -> {
@@ -998,7 +1005,7 @@ public class EqualizerEditorFragment extends Fragment {
             names[i] = spotifyPlaylists.get(i).name;
         }
 
-        new AlertDialog.Builder(requireContext())
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
                 .setTitle("Choose playlists")
                 .setMultiChoiceItems(names, checkedPlaylists, (dialog, which, isChecked) -> checkedPlaylists[which] = isChecked)
                 .setPositiveButton("Import", (dialog, which) -> {

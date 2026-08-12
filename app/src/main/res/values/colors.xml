@@ -8,4 +8,10 @@
          purple (#800080) instead of this one. -->
     <color name="eq_accent">#A855F7</color>
     <color name="eq_accent_dark">#710193</color>
+
+    <!-- Matches the black used across activity_login/activity_sign_up/fragment_settings,
+         so dialogs (create preset/folder, playlist import) read as one surface with the
+         rest of the app instead of falling back to the default light dialog background. -->
+    <color name="eq_dialog_background">#000000</color>
+    <color name="eq_text_secondary">#B3FFFFFF</color>
 </resources>
