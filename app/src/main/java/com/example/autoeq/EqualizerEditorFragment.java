@@ -1839,9 +1839,15 @@ public class EqualizerEditorFragment extends Fragment {
      * normal import - it can still link to an existing preset elsewhere in
      * the library instead of starting at 0 dB). A folder preset with no
      * matching current track was removed from the playlist on Spotify's
-     * side - per how this was asked for, it's detached (folderId = null),
-     * never deleted, so any EQ tuning survives even though the song left
-     * the playlist.
+     * side - that one instance gets deleted outright (not just detached -
+     * moving removed songs out of the folder instead of deleting them was
+     * the original design, but it cluttered the top-level list enough that
+     * outright deletion is what was actually wanted). This only ever
+     * deletes the one row for this folder: if it's a linked duplicate, the
+     * real data (and any other duplicates pointing at it) are untouched;
+     * if it happens to own the data itself, that mirrors how manual
+     * multi-select delete already works elsewhere in the app - it doesn't
+     * re-point other duplicates either.
      */
     private void applySyncedTracks(Folder folder, String newSnapshotId, List<SpotifyWebApiClient.SpotifyTrack> currentTracks,
                                     int[] totals, Runnable onDone) {
@@ -1852,6 +1858,7 @@ public class EqualizerEditorFragment extends Fragment {
 
         List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
         List<SelectedEqualizer> toSave = new ArrayList<>();
+        List<String> toDelete = new ArrayList<>();
         int added = 0;
         int removed = 0;
 
@@ -1886,8 +1893,7 @@ public class EqualizerEditorFragment extends Fragment {
             if (!folder.getId().equals(eq.getFolderId())) continue;
             if (currentKeys.contains(trackKey(eq))) continue;
 
-            eq.setFolderId(null);
-            toSave.add(eq);
+            toDelete.add(eq.getId());
             removed++;
         }
 
@@ -1908,15 +1914,28 @@ public class EqualizerEditorFragment extends Fragment {
             }
         };
 
+        EqualizerDataHandler.OperationCallback deleteRemovedThenSaveFolder = new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                dataHandler.saveFolder(folder, saveFolderThenDone);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_SYNC", "Failed to delete removed presets for \"" + folder.getName() + "\"", e);
+                dataHandler.saveFolder(folder, saveFolderThenDone);
+            }
+        };
+
         if (toSave.isEmpty()) {
-            dataHandler.saveFolder(folder, saveFolderThenDone);
+            dataHandler.deleteEqualizers(toDelete, deleteRemovedThenSaveFolder);
             return;
         }
 
         dataHandler.saveEqualizers(toSave, new EqualizerDataHandler.OperationCallback() {
             @Override
             public void onSuccess() {
-                dataHandler.saveFolder(folder, saveFolderThenDone);
+                dataHandler.deleteEqualizers(toDelete, deleteRemovedThenSaveFolder);
             }
 
             @Override
