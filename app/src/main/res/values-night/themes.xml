@@ -8,8 +8,8 @@
          (the higher surface-container levels) still read as a step lighter
          than the main equalizer background, not identically flat black. -->
     <style name="Base.Theme.AutoEQ" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:fontFamily">@font/space_grotesk</item>
-        <item name="fontFamily">@font/space_grotesk</item>
+        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="fontFamily">sans-serif-light</item>
 
         <item name="android:colorBackground">#08070A</item>
         <item name="colorSurface">#08070A</item>

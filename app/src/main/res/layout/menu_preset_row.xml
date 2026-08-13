@@ -44,7 +44,8 @@
         android:layout_weight="1"
         android:layout_marginEnd="12dp"
         android:textSize="14sp"
-        android:textColor="?attr/colorOnSurface" />
+        android:textColor="?attr/colorOnSurface"
+        android:fontFamily="sans-serif" />
 
     <CheckBox
         android:id="@+id/row_checkbox"

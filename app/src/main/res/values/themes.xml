@@ -5,9 +5,11 @@
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
 
         <!-- Applies app-wide by default - individual TextViews/buttons don't
-             need to opt in. See res/font/space_grotesk.xml. -->
-        <item name="android:fontFamily">@font/space_grotesk</item>
-        <item name="fontFamily">@font/space_grotesk</item>
+             need to opt in. sans-serif-light is a built-in Android generic
+             family (maps to Roboto Light) - no downloadable font fetch
+             needed, unlike the Space Grotesk font this replaced. -->
+        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="fontFamily">sans-serif-light</item>
     </style>
 
     <style name="Theme.AutoEQ" parent="Base.Theme.AutoEQ" />
@@ -37,7 +39,7 @@
         <item name="android:textColorHint">@color/eq_text_secondary</item>
         <item name="textColorAlertDialogListItem">@color/white</item>
         <item name="android:editTextColor">@color/white</item>
-        <item name="android:fontFamily">@font/space_grotesk</item>
-        <item name="fontFamily">@font/space_grotesk</item>
+        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="fontFamily">sans-serif-light</item>
     </style>
 </resources>
