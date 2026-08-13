@@ -22,6 +22,25 @@
         app:iconTint="@color/white"
         app:shapeAppearanceOverlay="@style/ShapeAppearance.App.Square" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_refresh_all"
+        style="@style/Widget.Material3.Button.Icon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_marginStart="8dp"
+        android:background="@android:color/transparent"
+        android:insetLeft="0dp"
+        android:insetTop="0dp"
+        android:insetRight="0dp"
+        android:insetBottom="0dp"
+        android:padding="0dp"
+        android:contentDescription="Refresh all playlists"
+        app:icon="@drawable/ic_refresh"
+        app:iconGravity="textStart"
+        app:iconPadding="0dp"
+        app:iconTint="@color/white"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.App.Square" />
+
     <!-- Selection-mode buttons: hidden until a long-press starts selecting
          presets/folders, replacing the plus button in that mode. -->
 

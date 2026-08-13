@@ -29,6 +29,16 @@ public class SpotifyWebApiClient {
     private static final String BASE_URL = "https://api.spotify.com/v1";
     private final OkHttpClient httpClient = NetworkClients.SHARED;
 
+    /**
+     * Sentinel SpotifyPlaylist.id for the user's Liked Songs - Spotify treats
+     * saved tracks as a separate resource from playlists entirely (it never
+     * appears in /me/playlists, and has no real id of its own), so this
+     * stands in for one everywhere a Folder/SpotifyPlaylist needs an id to
+     * key off of (dedup, sync, the picker dialog). Not a real Spotify id
+     * format, so it can never collide with one.
+     */
+    public static final String LIKED_SONGS_ID = "__liked_songs__";
+
     public interface PlaylistsCallback {
         void onSuccess(List<SpotifyPlaylist> playlists);
         void onFailure(Exception e);
@@ -160,6 +170,88 @@ public class SpotifyWebApiClient {
     public void fetchPlaylistTracks(String accessToken, String playlistId, TracksCallback callback) {
         List<SpotifyTrack> collected = new ArrayList<>();
         fetchTracksPage(accessToken, BASE_URL + "/playlists/" + playlistId + "/items?limit=50", collected, callback);
+    }
+
+    /**
+     * GET /me/tracks - the user's Liked Songs, paginated the same way
+     * fetchPlaylistTracks is. A separate endpoint entirely because Spotify
+     * treats saved tracks as their own resource, not a playlist (no id,
+     * never listed in /me/playlists).
+     */
+    public void fetchLikedSongs(String accessToken, TracksCallback callback) {
+        List<SpotifyTrack> collected = new ArrayList<>();
+        fetchLikedSongsPage(accessToken, BASE_URL + "/me/tracks?limit=50", collected, callback);
+    }
+
+    private void fetchLikedSongsPage(String accessToken, String url, List<SpotifyTrack> collected, TracksCallback callback) {
+        Request request = new Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer " + accessToken)
+                .build();
+
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.e(TAG, "Failed to fetch liked songs", e);
+                callback.onFailure(e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                try (Response r = response) {
+                    if (!r.isSuccessful() || r.body() == null) {
+                        callback.onFailure(new IOException("Spotify liked songs request failed: " + describeError(r)));
+                        return;
+                    }
+                    JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();
+                    JsonArray items = body.getAsJsonArray("items");
+                    if (items != null) {
+                        for (JsonElement el : items) {
+                            JsonObject entry = el.getAsJsonObject();
+                            // Saved-tracks entries key the track object as
+                            // "track" per Spotify's docs, but the playlist
+                            // items endpoint above turned out to use "item"
+                            // instead (see fetchTracksPage) - checking both
+                            // means this doesn't silently come back empty if
+                            // Spotify's naming here isn't what's documented.
+                            JsonObject track = entry.has("track") && !entry.get("track").isJsonNull()
+                                    ? entry.getAsJsonObject("track")
+                                    : (entry.has("item") && !entry.get("item").isJsonNull() ? entry.getAsJsonObject("item") : null);
+                            if (track == null) continue;
+
+                            JsonElement isLocalEl = track.get("is_local");
+                            if (isLocalEl != null && isLocalEl.getAsBoolean()) continue; // skip local files
+
+                            String name = track.has("name") && !track.get("name").isJsonNull()
+                                    ? track.get("name").getAsString() : null;
+                            JsonArray artists = track.getAsJsonArray("artists");
+                            String artist = (artists != null && artists.size() > 0)
+                                    && artists.get(0).getAsJsonObject().has("name")
+                                    ? artists.get(0).getAsJsonObject().get("name").getAsString() : null;
+                            String album = extractAlbumName(track);
+                            String albumArtUrl = extractSmallestAlbumArtUrl(track);
+
+                            if (name != null && artist != null) {
+                                collected.add(new SpotifyTrack(name, artist, album, albumArtUrl));
+                            }
+                        }
+                    }
+
+                    JsonElement totalEl = body.get("total");
+                    int total = totalEl != null && !totalEl.isJsonNull() ? totalEl.getAsInt() : -1;
+                    callback.onProgress(collected.size(), total);
+
+                    JsonElement nextEl = body.get("next");
+                    if (nextEl != null && !nextEl.isJsonNull()) {
+                        fetchLikedSongsPage(accessToken, nextEl.getAsString(), collected, callback);
+                    } else {
+                        callback.onSuccess(collected);
+                    }
+                } catch (Exception e) {
+                    callback.onFailure(e);
+                }
+            }
+        });
     }
 
     /**

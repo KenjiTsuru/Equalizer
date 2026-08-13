@@ -1,6 +1,5 @@
 package com.example.autoeq;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
@@ -13,6 +12,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
@@ -136,6 +136,7 @@ public class EqualizerEditorFragment extends Fragment {
     private SwitchCompat powerSwitch;
     private EditText searchBar;
     private View btnCreateEq;
+    private View btnRefreshAll;
     private View btnDeleteSelected;
     private View btnMoveSelected;
     private View btnExitSelection;
@@ -172,12 +173,16 @@ public class EqualizerEditorFragment extends Fragment {
         toolbar.setNavigationIcon(R.drawable.ic_hamburger_menu);
         toolbar.setNavigationOnClickListener(v -> drawerLayout.openDrawer(GravityCompat.START));
 
-        View headerView = navView.getHeaderView(0);
-        btnCreateEq = headerView.findViewById(R.id.btn_create_eq);
-        btnDeleteSelected = headerView.findViewById(R.id.btn_delete_selected);
-        btnMoveSelected = headerView.findViewById(R.id.btn_move_selected);
-        btnExitSelection = headerView.findViewById(R.id.btn_exit_selection);
-        searchBar = headerView.findViewById(R.id.drawer_search_bar);
+        // The header used to be found via navView.getHeaderView(0), but it's
+        // now inflated directly into the fragment root (see
+        // equalizer_fragment.xml) so it can stay fixed above the
+        // NavigationView's scrolling menu instead of scrolling away with it.
+        btnCreateEq = view.findViewById(R.id.btn_create_eq);
+        btnRefreshAll = view.findViewById(R.id.btn_refresh_all);
+        btnDeleteSelected = view.findViewById(R.id.btn_delete_selected);
+        btnMoveSelected = view.findViewById(R.id.btn_move_selected);
+        btnExitSelection = view.findViewById(R.id.btn_exit_selection);
+        searchBar = view.findViewById(R.id.drawer_search_bar);
 
         if (searchBar != null) {
             searchBar.addTextChangedListener(new android.text.TextWatcher() {
@@ -197,6 +202,10 @@ public class EqualizerEditorFragment extends Fragment {
                 drawerLayout.closeDrawer(GravityCompat.START);
                 showCreateChooserDialog();
             });
+        }
+
+        if (btnRefreshAll != null) {
+            btnRefreshAll.setOnClickListener(v -> refreshAllFolders());
         }
 
         if (btnDeleteSelected != null) {
@@ -568,10 +577,22 @@ public class EqualizerEditorFragment extends Fragment {
     private void showProgressDialog(String message) {
         if (!isAdded()) return;
         if (progressDialog == null) {
-            View view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_progress, null, false);
+            MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog);
+            // Themed context, not the fragment's own - same reasoning as
+            // showCreateEqualizerDialog: inflating with the fragment context
+            // left this one dialog on the default light background instead
+            // of matching every other dialog in the app.
+            View view = LayoutInflater.from(builder.getContext()).inflate(R.layout.dialog_progress, null, false);
             progressDialogBar = view.findViewById(R.id.progress_dialog_bar);
             progressDialogText = view.findViewById(R.id.progress_dialog_text);
-            progressDialog = new AlertDialog.Builder(requireContext())
+            // ?android:attr/progressBarStyleHorizontal's tint doesn't reliably
+            // pick up colorControlActivated from the theme overlay on every
+            // OEM skin, so it's set directly rather than left to attribute
+            // resolution.
+            ColorStateList accent = ColorStateList.valueOf(builder.getContext().getColor(R.color.eq_accent));
+            progressDialogBar.setIndeterminateTintList(accent);
+            progressDialogBar.setProgressTintList(accent);
+            progressDialog = builder
                     .setView(view)
                     .setCancelable(false)
                     .create();
@@ -652,6 +673,7 @@ public class EqualizerEditorFragment extends Fragment {
             selectedFolderIds.clear();
         }
         if (btnCreateEq != null) btnCreateEq.setVisibility(enabled ? View.GONE : View.VISIBLE);
+        if (btnRefreshAll != null) btnRefreshAll.setVisibility(enabled ? View.GONE : View.VISIBLE);
         if (btnDeleteSelected != null) btnDeleteSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
         if (btnMoveSelected != null) btnMoveSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
         if (btnExitSelection != null) btnExitSelection.setVisibility(enabled ? View.VISIBLE : View.GONE);
@@ -1045,10 +1067,15 @@ public class EqualizerEditorFragment extends Fragment {
      * opposite sides of the bottom bar via setPositiveButton/setNegativeButton.
      */
     private void showPlaylistPickerDialog(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> spotifyPlaylists) {
-        if (spotifyPlaylists.isEmpty()) {
-            Toast.makeText(requireContext(), "No playlists found on this Spotify account", Toast.LENGTH_LONG).show();
-            return;
-        }
+        // Liked Songs never comes back from /me/playlists - Spotify treats it
+        // as a separate "saved tracks" resource, not a real playlist - so
+        // it's injected here as a synthetic first entry (using the
+        // LIKED_SONGS_ID sentinel in place of a real Spotify id) rather than
+        // fetched. Everything downstream (dedup, import, sync) already only
+        // keys off SpotifyPlaylist.id/name, so it flows through unchanged.
+        List<SpotifyWebApiClient.SpotifyPlaylist> allPlaylists = new ArrayList<>();
+        allPlaylists.add(new SpotifyWebApiClient.SpotifyPlaylist(SpotifyWebApiClient.LIKED_SONGS_ID, "Liked Songs", null));
+        allPlaylists.addAll(spotifyPlaylists);
 
         // A playlist already tied to a Folder (see finishPlaylistImport) can't
         // be picked again - re-importing it wouldn't do anything a Firebase
@@ -1060,13 +1087,13 @@ public class EqualizerEditorFragment extends Fragment {
         }
 
         List<SpotifyWebApiClient.SpotifyPlaylist> importable = new ArrayList<>();
-        for (SpotifyWebApiClient.SpotifyPlaylist playlist : spotifyPlaylists) {
+        for (SpotifyWebApiClient.SpotifyPlaylist playlist : allPlaylists) {
             if (!alreadyImportedIds.contains(playlist.id)) importable.add(playlist);
         }
 
-        int alreadyImportedCount = spotifyPlaylists.size() - importable.size();
+        int alreadyImportedCount = allPlaylists.size() - importable.size();
         if (importable.isEmpty()) {
-            Toast.makeText(requireContext(), "All " + spotifyPlaylists.size() + " playlists on this account are already imported", Toast.LENGTH_LONG).show();
+            Toast.makeText(requireContext(), "All " + allPlaylists.size() + " playlists on this account are already imported", Toast.LENGTH_LONG).show();
             return;
         }
         if (alreadyImportedCount > 0) {
@@ -1196,7 +1223,7 @@ public class EqualizerEditorFragment extends Fragment {
 
     private void importPlaylists(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists, boolean applyGenreEq) {
         showProgressDialog("Importing " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s") + "...");
-        importPlaylistsSequentially(accessToken, playlists, 0, new int[2], applyGenreEq, new GenreMatchStats());
+        importPlaylistsSequentially(accessToken, playlists, 0, new int[2], applyGenreEq, new GenreMatchStats(), new ArrayList<>());
     }
 
     private void showGenreMatchResultsDialog(GenreMatchStats genreStats) {
@@ -1208,24 +1235,51 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /**
+     * A playlist that failed outright (network error, permission error, etc.)
+     * used to be silently indistinguishable from one that genuinely had zero
+     * tracks - both just added 0 to the totals. Surfaced here instead so a
+     * real failure (e.g. a missing OAuth scope) shows up as "1 failed" with
+     * the actual error message, not a quiet "Imported 0 songs."
+     */
+    private void showImportFailuresDialog(List<String> failures) {
+        StringBuilder sb = new StringBuilder();
+        for (String failure : failures) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(failure);
+        }
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle(failures.size() + " playlist" + (failures.size() == 1 ? "" : "s") + " failed to import")
+                .setMessage(sb.toString())
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /**
      * Imports playlists one at a time (rather than all at once) so the
      * progress dialog can show honest "playlist X of N" status and so one
      * playlist failing (network hiccup, deleted mid-import, etc.) doesn't
      * abort the rest of the batch - it's logged and skipped instead.
      * totals[0]/[1] accumulate created/linked counts across every playlist
-     * for the single summary toast shown once the whole batch finishes.
+     * for the single summary toast shown once the whole batch finishes;
+     * failures collects a message per playlist that failed outright.
      */
     private void importPlaylistsSequentially(String accessToken, List<SpotifyWebApiClient.SpotifyPlaylist> playlists,
-                                              int index, int[] totals, boolean applyGenreEq, GenreMatchStats genreStats) {
+                                              int index, int[] totals, boolean applyGenreEq, GenreMatchStats genreStats,
+                                              List<String> failures) {
         if (index >= playlists.size()) {
             if (!isAdded()) return;
             dismissProgressDialog();
             int total = totals[0] + totals[1];
+            int succeeded = playlists.size() - failures.size();
             Toast.makeText(requireContext(),
                     "Imported " + total + " song" + (total == 1 ? "" : "s")
-                            + " from " + playlists.size() + " playlist" + (playlists.size() == 1 ? "" : "s")
-                            + (totals[1] > 0 ? " (" + totals[1] + " linked to existing presets)" : ""),
+                            + " from " + succeeded + " playlist" + (succeeded == 1 ? "" : "s")
+                            + (totals[1] > 0 ? " (" + totals[1] + " linked to existing presets)" : "")
+                            + (!failures.isEmpty() ? " - " + failures.size() + " failed" : ""),
                     Toast.LENGTH_LONG).show();
+            if (!failures.isEmpty()) {
+                showImportFailuresDialog(failures);
+            }
             // A toast can't reliably show more than a line or two - the genre
             // breakdown needs its own dialog instead, which has no such limit.
             if (applyGenreEq && genreStats.songsChecked > 0) {
@@ -1241,10 +1295,10 @@ public class EqualizerEditorFragment extends Fragment {
         ImportCompletionCallback next = (created, linked) -> {
             totals[0] += created;
             totals[1] += linked;
-            importPlaylistsSequentially(accessToken, playlists, index + 1, totals, applyGenreEq, genreStats);
+            importPlaylistsSequentially(accessToken, playlists, index + 1, totals, applyGenreEq, genreStats, failures);
         };
 
-        spotifyWebApiClient.fetchPlaylistTracks(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
+        fetchTracksForSpotifyId(accessToken, playlist.id, new SpotifyWebApiClient.TracksCallback() {
             @Override
             public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
                 if (!isAdded() || getActivity() == null) return;
@@ -1260,6 +1314,7 @@ public class EqualizerEditorFragment extends Fragment {
             @Override
             public void onFailure(Exception e) {
                 Log.e("PLAYLIST_IMPORT", "Failed to load tracks for \"" + playlist.name + "\"", e);
+                failures.add(playlist.name + ": " + e.getMessage());
                 if (!isAdded() || getActivity() == null) return;
                 getActivity().runOnUiThread(() -> next.onComplete(0, 0));
             }
@@ -1751,6 +1806,24 @@ public class EqualizerEditorFragment extends Fragment {
         });
     }
 
+    /** Routes to the Liked Songs endpoint for the LIKED_SONGS_ID sentinel, or a normal playlist fetch for a real Spotify id - the one place this branch needs to exist so every caller (import, single-folder sync, sync-all) can just pass whichever id a Folder/SpotifyPlaylist happens to have. */
+    private void fetchTracksForSpotifyId(String accessToken, String spotifyId, SpotifyWebApiClient.TracksCallback callback) {
+        if (SpotifyWebApiClient.LIKED_SONGS_ID.equals(spotifyId)) {
+            spotifyWebApiClient.fetchLikedSongs(accessToken, callback);
+        } else {
+            spotifyWebApiClient.fetchPlaylistTracks(accessToken, spotifyId, callback);
+        }
+    }
+
+    /** Liked Songs has no snapshot_id concept (it isn't a real playlist) - resolves to null immediately instead of wasting a request on a /playlists/{id} lookup that would just 404. */
+    private void fetchSnapshotIdForSpotifyId(String accessToken, String spotifyId, SpotifyWebApiClient.SnapshotIdCallback callback) {
+        if (SpotifyWebApiClient.LIKED_SONGS_ID.equals(spotifyId)) {
+            callback.onResult(null);
+        } else {
+            spotifyWebApiClient.fetchPlaylistSnapshotId(accessToken, spotifyId, callback);
+        }
+    }
+
     /**
      * The refresh icon's tap handler - the sole way playlist sync happens
      * now (see bindFolderRefreshAction for why the automatic background
@@ -1792,7 +1865,7 @@ public class EqualizerEditorFragment extends Fragment {
      */
     private void syncSingleFolder(String accessToken, Folder folder) {
         updateProgressDialog("Syncing \"" + folder.getName() + "\"...", 0, 0);
-        spotifyWebApiClient.fetchPlaylistTracks(accessToken, folder.getSpotifyPlaylistId(), new SpotifyWebApiClient.TracksCallback() {
+        fetchTracksForSpotifyId(accessToken, folder.getSpotifyPlaylistId(), new SpotifyWebApiClient.TracksCallback() {
             @Override
             public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
                 if (!isAdded() || getActivity() == null) return;
@@ -1803,7 +1876,7 @@ public class EqualizerEditorFragment extends Fragment {
                     // gating anything here. If this particular request fails,
                     // keep whatever baseline was already stored rather than
                     // clobbering it with null.
-                    spotifyWebApiClient.fetchPlaylistSnapshotId(accessToken, folder.getSpotifyPlaylistId(), freshSnapshotId -> {
+                    fetchSnapshotIdForSpotifyId(accessToken, folder.getSpotifyPlaylistId(), freshSnapshotId -> {
                         if (!isAdded() || getActivity() == null) return;
                         String newSnapshotId = freshSnapshotId != null ? freshSnapshotId : folder.getSnapshotId();
                         int[] totals = new int[]{0, 0}; // [added, removed]
@@ -1838,6 +1911,117 @@ public class EqualizerEditorFragment extends Fragment {
                 if (!isAdded() || getActivity() == null) return;
                 getActivity().runOnUiThread(() -> updateProgressDialog(
                         "Syncing \"" + folder.getName() + "\"..." + (total > 0 ? " (" + fetchedSoFar + "/" + total + ")" : ""),
+                        fetchedSoFar, total));
+            }
+        });
+    }
+
+    /**
+     * The "refresh all" button next to the drawer's + button - checks every
+     * imported playlist for changes in one go. Spotify has no bulk endpoint
+     * to check multiple playlists at once, so this costs exactly as much as
+     * tapping each folder's own refresh icon in turn (one paginated track
+     * fetch per playlist) - it's a convenience for "check everything," not a
+     * cheaper alternative to a single folder's refresh icon, which is why
+     * that per-folder icon is still here rather than being replaced by this.
+     */
+    private void refreshAllFolders() {
+        if (!isAdded() || !(requireActivity() instanceof MainActivity)) return;
+
+        List<Folder> spotifyFolders = new ArrayList<>();
+        for (Folder folder : folders) {
+            if (folder.getSpotifyPlaylistId() != null) spotifyFolders.add(folder);
+        }
+        if (spotifyFolders.isEmpty()) {
+            Toast.makeText(requireContext(), "No imported playlists to refresh", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        showProgressDialog("Checking playlists for updates...");
+
+        ((MainActivity) requireActivity()).requestSpotifyWebApiToken(new MainActivity.SpotifyTokenCallback() {
+            @Override
+            public void onTokenReady(String accessToken) {
+                if (!isAdded()) return;
+                if (spotifyWebApiClient == null) {
+                    spotifyWebApiClient = new SpotifyWebApiClient();
+                }
+                syncFoldersSequentially(accessToken, spotifyFolders, 0, new int[]{0, 0}, new int[]{0});
+            }
+
+            @Override
+            public void onTokenError(String message) {
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                Toast.makeText(requireContext(), "Spotify login failed: " + message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * Syncs one playlist at a time (recursing into the next only once the
+     * current one's writes finish) rather than firing every folder's request
+     * in parallel - keeps the request rate against Spotify's API predictable
+     * and lets the progress dialog show which playlist is currently being
+     * checked. totals accumulates [added, removed] across every folder;
+     * failures[0] counts folders whose fetch failed outright (that folder is
+     * simply skipped, not retried, so one bad playlist doesn't block the rest).
+     */
+    private void syncFoldersSequentially(String accessToken, List<Folder> targets, int index, int[] totals, int[] failures) {
+        if (index >= targets.size()) {
+            if (!isAdded()) return;
+            dismissProgressDialog();
+            int failedCount = failures[0];
+            int syncedCount = targets.size() - failedCount;
+            if (failedCount > 0) {
+                Toast.makeText(requireContext(),
+                        "Synced " + syncedCount + "/" + targets.size() + " playlists: "
+                                + totals[0] + " added, " + totals[1] + " removed (" + failedCount + " failed)",
+                        Toast.LENGTH_LONG).show();
+            } else if (totals[0] == 0 && totals[1] == 0) {
+                Toast.makeText(requireContext(), "All " + targets.size() + " playlists already up to date", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(requireContext(),
+                        "Synced " + targets.size() + " playlists: " + totals[0] + " added, " + totals[1] + " removed",
+                        Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        Folder folder = targets.get(index);
+        int position = index + 1;
+        updateProgressDialog("Checking \"" + folder.getName() + "\" (" + position + "/" + targets.size() + ")...", 0, 0);
+
+        fetchTracksForSpotifyId(accessToken, folder.getSpotifyPlaylistId(), new SpotifyWebApiClient.TracksCallback() {
+            @Override
+            public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> fetchSnapshotIdForSpotifyId(accessToken, folder.getSpotifyPlaylistId(), freshSnapshotId -> {
+                    if (!isAdded() || getActivity() == null) return;
+                    String newSnapshotId = freshSnapshotId != null ? freshSnapshotId : folder.getSnapshotId();
+                    int[] folderTotals = new int[]{0, 0};
+                    getActivity().runOnUiThread(() -> applySyncedTracks(folder, newSnapshotId, tracks, folderTotals, () -> {
+                        totals[0] += folderTotals[0];
+                        totals[1] += folderTotals[1];
+                        syncFoldersSequentially(accessToken, targets, index + 1, totals, failures);
+                    }));
+                }));
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_SYNC", "Sync-all failed for \"" + folder.getName() + "\"", e);
+                failures[0]++;
+                if (!isAdded()) return;
+                syncFoldersSequentially(accessToken, targets, index + 1, totals, failures);
+            }
+
+            @Override
+            public void onProgress(int fetchedSoFar, int total) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> updateProgressDialog(
+                        "Checking \"" + folder.getName() + "\" (" + position + "/" + targets.size() + ")"
+                                + (total > 0 ? " - " + fetchedSoFar + "/" + total : "") + "...",
                         fetchedSoFar, total));
             }
         });
@@ -2120,20 +2304,71 @@ public class EqualizerEditorFragment extends Fragment {
 
     /**
      * Tapping the song/artist name in the toolbar brings up actions scoped to
-     * that one preset - just "Reset EQ" for now, styled as a list so more can
-     * be added later without changing the entry point.
+     * that one preset - "Reset EQ" and "Set Preset" for now, styled as a
+     * list so more can be added later without changing the entry point.
      */
     private void showSongOptionsDialog() {
         if (currentEq == null) return;
 
-        String[] options = {"Reset EQ"};
+        String[] options = {"Reset EQ", "Set Preset"};
         new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
                 .setTitle(currentEq.getDisplayName())
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) showResetEqConfirmation();
+                    else if (which == 1) showGenrePresetPickerDialog();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    /** Lists every premade genre EQ curve (see GenrePresets) so the user can apply one directly to this preset, independent of the automatic genre-match-on-import flow. */
+    private void showGenrePresetPickerDialog() {
+        if (currentEq == null) return;
+
+        String[] genreNames = GenrePresets.allGenreNames().toArray(new String[0]);
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Set Preset")
+                .setItems(genreNames, (dialog, which) -> showApplyGenrePresetConfirmation(genreNames[which]))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showApplyGenrePresetConfirmation(String genreName) {
+        if (currentEq == null) return;
+
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Apply \"" + genreName + "\"?")
+                .setMessage("Apply the \"" + genreName + "\" preset to \"" + currentEq.getDisplayName() + "\"? This overwrites its current band levels.")
+                .setNegativeButton("No", null)
+                .setPositiveButton("Yes", (dialog, which) -> applyGenrePresetToCurrentEq(genreName))
+                .show();
+    }
+
+    /**
+     * Drives every band's seekbar to the picked genre's premade levels (see
+     * GenrePresets) - same setProgress()-based approach as
+     * resetCurrentEqToZero, so this can't drift out of sync with a manual
+     * drag's live audio engine + curve view updates. setProgress() doesn't
+     * trigger a save on its own, hence the explicit persistCurrentBandLevels()
+     * call after.
+     */
+    private void applyGenrePresetToCurrentEq(String genreName) {
+        if (bandsContainer == null || currentEq == null) return;
+
+        int[] levels = GenrePresets.bandLevelsFor(genreName);
+        if (levels == null) return;
+
+        for (int band = 0; band < EqBandConfig.NUM_BANDS && band < levels.length; band++) {
+            View bandView = bandsContainer.getChildAt(band);
+            if (bandView == null) continue;
+            SeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
+            if (sb == null) continue;
+            int progress = Math.max(0, Math.min(SPAN, levels[band] - MIN_LEVEL));
+            sb.setProgress(progress);
+        }
+
+        persistCurrentBandLevels();
+        Toast.makeText(requireContext(), "Applied \"" + genreName + "\" preset to \"" + currentEq.getDisplayName() + "\"", Toast.LENGTH_SHORT).show();
     }
 
     private void showResetEqConfirmation() {

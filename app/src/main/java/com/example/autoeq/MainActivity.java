@@ -173,7 +173,11 @@ public class MainActivity extends AppCompatActivity {
 
         AuthorizationRequest.Builder builder =
                 new AuthorizationRequest.Builder(CLIENT_ID, AuthorizationResponse.Type.CODE, REDIRECT_URI);
-        builder.setScopes(new String[]{"playlist-read-private", "playlist-read-collaborative"});
+        // user-library-read is what GET /me/tracks (Liked Songs) needs -
+        // without it Spotify just 403s that endpoint, which surfaced in the
+        // app as a silent "Imported 0 songs" rather than a visible error
+        // (see importPlaylistsSequentially's onFailure).
+        builder.setScopes(new String[]{"playlist-read-private", "playlist-read-collaborative", "user-library-read"});
         builder.setPkceInformation(PKCEInformation.sha256(pendingCodeVerifier, codeChallenge));
         AuthorizationClient.openLoginActivity(this, WEB_API_TOKEN_REQUEST_CODE, builder.build());
     }

@@ -180,13 +180,27 @@
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
-    <!-- Drawer menu -->
-    <com.google.android.material.navigation.NavigationView
-        android:id="@+id/eq_nav_view"
-        android:layout_width="wrap_content"
+    <!-- Drawer menu: the header (search bar, +/refresh-all/selection-mode
+         buttons) is inflated here directly and kept fixed at the top, rather
+         than via NavigationView's own app:headerLayout - that mechanism
+         makes the header a scrolling item of the same list as the folders/
+         presets below it, which is exactly what should NOT scroll away. -->
+    <LinearLayout
+        android:layout_width="280dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
-        app:headerLayout="@layout/drawer_header"
-        app:menu="@menu/equalizer_drawer_menu" />
+        android:orientation="vertical"
+        android:background="?attr/colorSurface">
+
+        <include layout="@layout/drawer_header" />
+
+        <com.google.android.material.navigation.NavigationView
+            android:id="@+id/eq_nav_view"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            app:menu="@menu/equalizer_drawer_menu" />
+
+    </LinearLayout>
 
 </androidx.drawerlayout.widget.DrawerLayout>
