@@ -62,33 +62,33 @@ public final class GenrePresets {
     // 30, 50, 83, 138, 229, 380, 632, 1050, 1744, 2900, 4800, 8000 Hz.
     private static final List<GenreBucket> PRIORITY_ORDER = Collections.unmodifiableList(Arrays.asList(
             new GenreBucket("Indie Rock",
-                    new int[]{5, 10, 15, 0, 0, 0, 0, 5, 10, 15, 15, 10},
+                    new int[]{5, 5, 10, 0, 0, 0, 0, 5, 5, 10, 10, 5},
                     "indie rock", "indietronica", "garage rock"),
             new GenreBucket("Hip-Hop",
-                    new int[]{50, 60, 50, 10, -15, -20, 0, 15, 20, 15, 10, 15},
-                    "hip hop", "hip-hop", "boom bap", "hyphy", "g-funk"),
+                    new int[]{35, 40, 35, 5, -10, -15, 0, 10, 15, 10, 5, 10},
+                    "hip hop", "hip-hop", "hiphop", "boom bap", "hyphy", "g-funk", "sampling"),
             // The textbook "bass boost" shape: highest at 30 Hz, sloping
             // steadily down band by band into the treble, per the classic
             // rap-EQ description (loud low end, gradually receding as
             // frequency rises) plus a presence bump for lyric clarity.
             new GenreBucket("Rap",
-                    new int[]{60, 55, 45, 30, 15, 0, 5, 20, 25, 15, 10, 5},
+                    new int[]{40, 40, 30, 20, 10, 0, 5, 15, 20, 10, 5, 5},
                     "rap", "trap", "drill"),
             new GenreBucket("R&B",
-                    new int[]{30, 35, 30, 15, 5, 0, 10, 15, 20, 10, 10, 5},
-                    "r&b", "rnb", "r-n-b", "urban contemporary"),
+                    new int[]{20, 25, 20, 10, 5, 0, 5, 10, 15, 5, 5, 5},
+                    "r&b", "rnb", "r-n-b", "urban contemporary", "urban", "rhythmic"),
             new GenreBucket("Soul",
-                    new int[]{15, 20, 25, 20, 15, 5, 5, 15, 20, 15, 10, 5},
+                    new int[]{10, 15, 20, 15, 10, 5, 5, 10, 15, 10, 5, 5},
                     "soul", "motown"),
             new GenreBucket("Electronic",
-                    new int[]{55, 60, 45, 5, -20, -25, -10, 0, 10, 20, 35, 45},
+                    new int[]{40, 40, 30, 5, -15, -20, -5, 0, 5, 15, 25, 30},
                     "electronic", "edm", "house", "techno", "trance", "dubstep",
                     "electropop", "electronica", "drum and bass", "dnb", "dance"),
             new GenreBucket("Metal",
-                    new int[]{25, 30, 30, 10, -10, -25, -10, 10, 25, 35, 30, 25},
+                    new int[]{20, 20, 20, 5, -5, -20, -5, 5, 20, 25, 20, 20},
                     "metal"),
             new GenreBucket("Punk",
-                    new int[]{-5, 0, 10, 10, 0, -10, 0, 20, 30, 30, 25, 20},
+                    new int[]{-5, 0, 5, 5, 0, -5, 0, 15, 20, 20, 20, 15},
                     "punk"),
             // Checked before Country - Discogs' broad genre category is
             // literally named "Folk, World, & Country" as one compound
@@ -96,31 +96,42 @@ public final class GenrePresets {
             // ordering, genuinely folk/world tags would misroute to Country
             // just because that word happens to appear in the label.
             new GenreBucket("Folk/Acoustic",
-                    new int[]{0, 5, 10, 10, 5, 0, 5, 15, 20, 15, 15, 10},
+                    new int[]{0, 5, 5, 5, 5, 0, 5, 10, 15, 10, 10, 5},
                     "folk", "acoustic", "singer-songwriter"),
             new GenreBucket("Country",
-                    new int[]{5, 10, 10, 5, 5, 0, 5, 15, 20, 15, 15, 10},
+                    new int[]{5, 5, 5, 5, 5, 0, 5, 10, 15, 10, 10, 5},
                     "country"),
             new GenreBucket("Jazz",
-                    new int[]{0, 5, 5, 5, 5, 5, 10, 15, 10, 5, 5, 0},
+                    new int[]{0, 5, 5, 5, 5, 5, 5, 10, 5, 5, 5, 0},
                     "jazz"),
             new GenreBucket("Classical",
-                    new int[]{0, 0, 0, 0, 10, 0, 0, 0, 0, 5, 10, 15},
+                    new int[]{0, 0, 0, 0, 5, 0, 0, 0, 0, 5, 5, 10},
                     "classical", "orchestra", "orchestral"),
             new GenreBucket("Latin",
-                    new int[]{35, 40, 30, 5, -10, -10, 0, 15, 20, 20, 25, 20},
+                    new int[]{25, 30, 20, 5, -5, -5, 0, 10, 15, 15, 20, 15},
                     "latin", "reggaeton", "salsa", "bachata", "banda", "corrido"),
             new GenreBucket("Reggae",
-                    new int[]{50, 55, 40, 10, -20, -25, -10, 0, 10, 10, 10, 5},
+                    new int[]{35, 40, 30, 5, -15, -20, -5, 0, 5, 5, 5, 5},
                     "reggae", "dancehall", "ska"),
             new GenreBucket("Piano",
-                    new int[]{0, 0, 5, 10, 5, 0, 0, 5, 10, 20, 15, 10},
+                    new int[]{0, 0, 5, 5, 5, 0, 0, 5, 5, 15, 10, 5},
                     "piano"),
+            // Checked late (after every genre-specific bucket, right before
+            // the broad Rock/Pop catch-alls) because "dark" alone is too
+            // generic to trust first - a tag list that also contains "trap"
+            // or "techno" should still resolve to Rap or Electronic via
+            // those keywords before ever reaching this one. Only a track
+            // whose tags are genuinely just mood/space words like "dark",
+            // "atmospheric", "ethereal" with nothing more specific lands here.
+            new GenreBucket("Ambient/Atmospheric",
+                    new int[]{5, 10, 10, 5, 5, 0, 0, 0, 5, 5, 15, 20},
+                    "ambient", "atmospheric", "ethereal", "dream pop", "shoegaze",
+                    "darkwave", "dark ambient", "downtempo", "dark"),
             new GenreBucket("Rock",
-                    new int[]{15, 25, 30, 0, -10, -15, 5, 15, 25, 30, 20, 20},
+                    new int[]{10, 20, 20, 0, -5, -10, 5, 10, 20, 20, 15, 15},
                     "rock"),
             new GenreBucket("Pop",
-                    new int[]{10, 20, 20, 5, 0, -5, 0, 10, 15, 20, 15, 20},
+                    new int[]{5, 15, 15, 5, 0, -5, 0, 5, 10, 15, 10, 15},
                     "pop")
     ));
 
