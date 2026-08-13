@@ -1341,13 +1341,20 @@ public class EqualizerEditorFragment extends Fragment {
     private void matchTrackGenresThenFinish(SpotifyWebApiClient.SpotifyPlaylist playlist,
                                              List<SpotifyWebApiClient.SpotifyTrack> tracks, String progressPrefix,
                                              GenreMatchStats genreStats, ImportCompletionCallback onComplete) {
+        ensureGenreClientsInitialized();
+        Map<String, int[]> levelsByTrackKey = new HashMap<>();
+        matchTrackGenresOneByOne(progressPrefix, playlist.name, tracks, 0, new HashMap<>(), levelsByTrackKey, genreStats,
+                () -> finishPlaylistImport(playlist, tracks, levelsByTrackKey, onComplete));
+    }
+
+    /** Shared by the import flow and playlist sync - both look up genres via Last.fm/Discogs and lazily create these clients on first use. */
+    private void ensureGenreClientsInitialized() {
         if (lastFmApiClient == null) {
             lastFmApiClient = new LastFmApiClient();
         }
         if (discogsApiClient == null) {
             discogsApiClient = new DiscogsApiClient();
         }
-        matchTrackGenresOneByOne(playlist, tracks, 0, new HashMap<>(), new HashMap<>(), progressPrefix, genreStats, onComplete);
     }
 
     /** Tags plus which tier of the fallback chain they came from (null if none of the tiers found anything), so cached repeats still count toward GenreMatchStats correctly. */
@@ -1364,17 +1371,25 @@ public class EqualizerEditorFragment extends Fragment {
         void onResult(TagLookupResult result);
     }
 
-    private void matchTrackGenresOneByOne(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
+    /**
+     * Walks tracks one at a time through the Last.fm/Discogs fallback chain,
+     * recording a match (or lack of one) into levelsByTrackKey/genreStats as
+     * it goes, then runs onAllDone - shared by playlist import
+     * (matchTrackGenresThenFinish) and playlist sync (applySyncedTracks),
+     * which only differ in what "done" means (finish importing vs. finish
+     * saving synced tracks) and what to call the batch in progress messages.
+     */
+    private void matchTrackGenresOneByOne(String progressPrefix, String progressLabel, List<SpotifyWebApiClient.SpotifyTrack> tracks,
                                            int index, Map<String, TagLookupResult> tagCache, Map<String, int[]> levelsByTrackKey,
-                                           String progressPrefix, GenreMatchStats genreStats, ImportCompletionCallback onComplete) {
+                                           GenreMatchStats genreStats, Runnable onAllDone) {
         if (index >= tracks.size()) {
-            finishPlaylistImport(playlist, tracks, levelsByTrackKey, onComplete);
+            onAllDone.run();
             return;
         }
 
         SpotifyWebApiClient.SpotifyTrack track = tracks.get(index);
         String key = trackKey(track);
-        updateProgressDialog(progressPrefix + "Matching genres for \"" + playlist.name + "\" (" + index + "/" + tracks.size() + ")..."
+        updateProgressDialog(progressPrefix + "Matching genres for \"" + progressLabel + "\" (" + index + "/" + tracks.size() + ")..."
                         + "\n\nSit tight, this might take a couple minutes.",
                 index, tracks.size());
 
@@ -1386,7 +1401,7 @@ public class EqualizerEditorFragment extends Fragment {
             // through the message queue like the network path naturally does.
             if (isAdded() && getActivity() != null) {
                 getActivity().runOnUiThread(() -> matchTrackGenresOneByOne(
-                        playlist, tracks, index + 1, tagCache, levelsByTrackKey, progressPrefix, genreStats, onComplete));
+                        progressPrefix, progressLabel, tracks, index + 1, tagCache, levelsByTrackKey, genreStats, onAllDone));
             }
             return;
         }
@@ -1394,7 +1409,7 @@ public class EqualizerEditorFragment extends Fragment {
         fetchTagsWithFallbackChain(track, result -> {
             tagCache.put(key, result);
             recordTrackMatch(track, key, result, levelsByTrackKey, genreStats);
-            matchTrackGenresOneByOne(playlist, tracks, index + 1, tagCache, levelsByTrackKey, progressPrefix, genreStats, onComplete);
+            matchTrackGenresOneByOne(progressPrefix, progressLabel, tracks, index + 1, tagCache, levelsByTrackKey, genreStats, onAllDone);
         });
     }
 
@@ -1881,7 +1896,7 @@ public class EqualizerEditorFragment extends Fragment {
                         if (!isAdded() || getActivity() == null) return;
                         String newSnapshotId = freshSnapshotId != null ? freshSnapshotId : folder.getSnapshotId();
                         int[] totals = new int[]{0, 0}; // [added, removed]
-                        getActivity().runOnUiThread(() -> applySyncedTracks(folder, newSnapshotId, tracks, totals, () -> {
+                        getActivity().runOnUiThread(() -> applySyncedTracks(folder, "", newSnapshotId, tracks, totals, () -> {
                             if (!isAdded()) return;
                             dismissProgressDialog();
                             if (totals[0] == 0 && totals[1] == 0) {
@@ -2001,7 +2016,8 @@ public class EqualizerEditorFragment extends Fragment {
                     if (!isAdded() || getActivity() == null) return;
                     String newSnapshotId = freshSnapshotId != null ? freshSnapshotId : folder.getSnapshotId();
                     int[] folderTotals = new int[]{0, 0};
-                    getActivity().runOnUiThread(() -> applySyncedTracks(folder, newSnapshotId, tracks, folderTotals, () -> {
+                    String progressPrefix = "(" + position + "/" + targets.size() + ") ";
+                    getActivity().runOnUiThread(() -> applySyncedTracks(folder, progressPrefix, newSnapshotId, tracks, folderTotals, () -> {
                         totals[0] += folderTotals[0];
                         totals[1] += folderTotals[1];
                         syncFoldersSequentially(accessToken, targets, index + 1, totals, failures);
@@ -2044,9 +2060,16 @@ public class EqualizerEditorFragment extends Fragment {
      * if it happens to own the data itself, that mirrors how manual
      * multi-select delete already works elsewhere in the app - it doesn't
      * re-point other duplicates either.
+     *
+     * A genuinely new track (no existing match anywhere in the library) gets
+     * genre-matched the same way import does - but only if there's at least
+     * one such track. A sync that found nothing new (the common case,
+     * especially for "refresh all") never touches Last.fm/Discogs at all and
+     * stays exactly as fast as before this existed; the lookups only run for
+     * the actual new songs, not the whole playlist.
      */
-    private void applySyncedTracks(Folder folder, String newSnapshotId, List<SpotifyWebApiClient.SpotifyTrack> currentTracks,
-                                    int[] totals, Runnable onDone) {
+    private void applySyncedTracks(Folder folder, String progressPrefix, String newSnapshotId,
+                                    List<SpotifyWebApiClient.SpotifyTrack> currentTracks, int[] totals, Runnable onDone) {
         Set<String> currentKeys = new HashSet<>();
         for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
             currentKeys.add(trackKey(track));
@@ -2054,9 +2077,7 @@ public class EqualizerEditorFragment extends Fragment {
 
         List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
         List<SelectedEqualizer> toSave = new ArrayList<>();
-        List<String> toDelete = new ArrayList<>();
-        int added = 0;
-        int removed = 0;
+        List<SpotifyWebApiClient.SpotifyTrack> needsGenreMatch = new ArrayList<>();
 
         for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
             boolean alreadyInFolder = false;
@@ -2069,22 +2090,18 @@ public class EqualizerEditorFragment extends Fragment {
             if (alreadyInFolder) continue;
 
             SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
-            List<Integer> initialLevels = existingMatch != null
-                    ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
-                    : zeroLevels();
-
-            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
-            eq.setFolderId(folder.getId());
-            eq.setAlbumArtUrl(track.albumArtUrl);
-            eq.setId(dataHandler.generatePresetId());
             if (existingMatch != null) {
+                SelectedEqualizer eq = buildSyncedPreset(folder, track, new ArrayList<>(nonNullLevels(existingMatch.getBandLevels())));
                 eq.setLinkedPresetId(existingMatch.getId());
+                combinedExisting.add(eq);
+                toSave.add(eq);
+            } else {
+                needsGenreMatch.add(track);
             }
-            combinedExisting.add(eq);
-            toSave.add(eq);
-            added++;
         }
 
+        List<String> toDelete = new ArrayList<>();
+        int removed = 0;
         for (SelectedEqualizer eq : presets) {
             if (!folder.getId().equals(eq.getFolderId())) continue;
             if (currentKeys.contains(trackKey(eq))) continue;
@@ -2094,9 +2111,40 @@ public class EqualizerEditorFragment extends Fragment {
         }
 
         folder.setSnapshotId(newSnapshotId);
-        totals[0] += added;
+        totals[0] += toSave.size() + needsGenreMatch.size();
         totals[1] += removed;
 
+        boolean canGenreMatch = BuildConfig.LASTFM_API_KEY != null && !BuildConfig.LASTFM_API_KEY.isEmpty();
+        if (needsGenreMatch.isEmpty() || !canGenreMatch) {
+            for (SpotifyWebApiClient.SpotifyTrack track : needsGenreMatch) {
+                toSave.add(buildSyncedPreset(folder, track, zeroLevels()));
+            }
+            saveSyncedTracks(folder, toSave, toDelete, onDone);
+            return;
+        }
+
+        ensureGenreClientsInitialized();
+        Map<String, int[]> levelsByTrackKey = new HashMap<>();
+        matchTrackGenresOneByOne(progressPrefix, folder.getName(), needsGenreMatch, 0, new HashMap<>(), levelsByTrackKey,
+                new GenreMatchStats(), () -> {
+                    for (SpotifyWebApiClient.SpotifyTrack track : needsGenreMatch) {
+                        int[] genreLevels = levelsByTrackKey.get(trackKey(track));
+                        toSave.add(buildSyncedPreset(folder, track, genreLevels != null ? toLevelList(genreLevels) : zeroLevels()));
+                    }
+                    saveSyncedTracks(folder, toSave, toDelete, onDone);
+                });
+    }
+
+    private SelectedEqualizer buildSyncedPreset(Folder folder, SpotifyWebApiClient.SpotifyTrack track, List<Integer> initialLevels) {
+        SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
+        eq.setFolderId(folder.getId());
+        eq.setAlbumArtUrl(track.albumArtUrl);
+        eq.setId(dataHandler.generatePresetId());
+        return eq;
+    }
+
+    /** The actual Firebase write for a sync pass - save new/linked presets, delete removed ones, then persist the folder's new snapshot baseline. Split out of applySyncedTracks so both the "nothing to genre-match" and "genre matching finished" paths can call it. */
+    private void saveSyncedTracks(Folder folder, List<SelectedEqualizer> toSave, List<String> toDelete, Runnable onDone) {
         EqualizerDataHandler.OperationCallback saveFolderThenDone = new EqualizerDataHandler.OperationCallback() {
             @Override
             public void onSuccess() {
