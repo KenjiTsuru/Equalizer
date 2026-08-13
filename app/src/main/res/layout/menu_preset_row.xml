@@ -12,8 +12,28 @@
     android:focusable="true"
     android:background="?attr/selectableItemBackground">
 
-    <!-- Title is first/flexible and the icon (album art for a song preset,
-         the expand/collapse chevron for a folder) is pinned last, at a fixed
+    <!-- Spotify-linked folders only (see bindFolderRefreshAction) - pinned
+         first/left, away from the row's own tap target and the folder
+         chevron on the right, so it doesn't sit under a right-handed
+         thumb's natural tap spot. Its own click target, independent of the
+         row's own click/long-click, sized up to a real touch target via
+         padding even though the glyph itself is small. -->
+    <ImageView
+        android:id="@+id/row_refresh_icon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="4dp"
+        android:padding="8dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Sync with Spotify"
+        android:src="@drawable/ic_refresh"
+        app:tint="?attr/colorOnSurfaceVariant"
+        android:visibility="gone" />
+
+    <!-- Title is flexible and the icon (album art for a song preset, the
+         expand/collapse chevron for a folder) is pinned last, at a fixed
          size - so the icon always sits in the same spot against the drawer's
          right edge no matter how long the title is, instead of shifting
          around with it. -->

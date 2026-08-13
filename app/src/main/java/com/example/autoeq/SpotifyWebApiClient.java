@@ -44,9 +44,11 @@ public class SpotifyWebApiClient {
     public static class SpotifyPlaylist {
         public final String id;
         public final String name;
-        public SpotifyPlaylist(String id, String name) {
+        public final String snapshotId; // changes whenever the playlist's contents change - null if the response didn't include one
+        public SpotifyPlaylist(String id, String name, String snapshotId) {
             this.id = id;
             this.name = name;
+            this.snapshotId = snapshotId;
         }
     }
 
@@ -128,7 +130,9 @@ public class SpotifyWebApiClient {
                             JsonObject obj = el.getAsJsonObject();
                             String id = obj.get("id").getAsString();
                             String name = obj.get("name").getAsString();
-                            collected.add(new SpotifyPlaylist(id, name));
+                            JsonElement snapshotEl = obj.get("snapshot_id");
+                            String snapshotId = snapshotEl != null && !snapshotEl.isJsonNull() ? snapshotEl.getAsString() : null;
+                            collected.add(new SpotifyPlaylist(id, name, snapshotId));
                         }
                     }
 
@@ -252,4 +256,48 @@ public class SpotifyWebApiClient {
         });
     }
 
+    public interface SnapshotIdCallback {
+        /** Null on any failure (network, HTTP error, unexpected body shape) - the caller treats that as "couldn't check this time," never as "definitely unchanged." */
+        void onResult(String snapshotId);
+    }
+
+    /**
+     * GET /playlists/{id} with a fields filter - the cheapest possible check
+     * for whether a playlist's contents have changed since it was last
+     * imported/synced, without paginating through every track. snapshot_id
+     * changes if and only if the playlist's contents change, so comparing it
+     * to what was stored at last sync is enough to decide whether a full
+     * fetchPlaylistTracks pass is even worth doing.
+     */
+    public void fetchPlaylistSnapshotId(String accessToken, String playlistId, SnapshotIdCallback callback) {
+        Request request = new Request.Builder()
+                .url(BASE_URL + "/playlists/" + playlistId + "?fields=snapshot_id")
+                .header("Authorization", "Bearer " + accessToken)
+                .build();
+
+        httpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.w(TAG, "Failed to check snapshot for playlist " + playlistId, e);
+                callback.onResult(null);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                try (Response r = response) {
+                    if (!r.isSuccessful() || r.body() == null) {
+                        Log.w(TAG, "Snapshot check failed for playlist " + playlistId + ": " + describeError(r));
+                        callback.onResult(null);
+                        return;
+                    }
+                    JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();
+                    JsonElement snapshotEl = body.get("snapshot_id");
+                    callback.onResult(snapshotEl != null && !snapshotEl.isJsonNull() ? snapshotEl.getAsString() : null);
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to parse snapshot response for playlist " + playlistId, e);
+                    callback.onResult(null);
+                }
+            }
+        });
+    }
 }

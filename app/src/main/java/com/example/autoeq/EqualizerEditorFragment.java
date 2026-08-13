@@ -402,14 +402,16 @@ public class EqualizerEditorFragment extends Fragment {
             boolean expanded = folder.getId().equals(expandedFolderId);
 
             android.view.MenuItem folderItem = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
-            folderItem.setActionView(buildDrawerRowView(
+            View folderRow = buildDrawerRowView(
                     folder.getName(),
                     R.drawable.ic_chevron_right,
                     expanded ? 90f : 0f,
                     selectedFolderIds.contains(folder.getId()),
                     v -> onFolderRowClicked(folder),
                     v -> onFolderRowLongClicked(folder)
-            ));
+            );
+            bindFolderRefreshAction(folderRow, folder);
+            folderItem.setActionView(folderRow);
 
             if (!expanded) continue;
 
@@ -541,6 +543,25 @@ public class EqualizerEditorFragment extends Fragment {
         SelectedEqualizer dataSource = resolveDataSource(eq);
         String source = dataSource != null ? dataSource.getSource() : null;
         return "local".equals(source) ? R.drawable.ic_local_file : android.R.drawable.ic_media_next;
+    }
+
+    /**
+     * Spotify-linked folders only: wires up the refresh icon added to
+     * menu_preset_row.xml - a manual "check now" the user can hit any time.
+     * Purely manual, no automatic background checking - that was tried and
+     * removed (see the "getting rid of the automatic playlist refreshing"
+     * conversation this came out of): Spotify's own snapshot_id can lag
+     * behind a playlist's real contents, which made the background version
+     * unreliable both for auto-applying changes and for deciding when to
+     * light this icon up, and the manual tap alone was already proven to
+     * work correctly on its own.
+     */
+    private void bindFolderRefreshAction(View row, Folder folder) {
+        ImageView refreshIcon = row.findViewById(R.id.row_refresh_icon);
+        if (refreshIcon == null || folder.getSpotifyPlaylistId() == null) return;
+
+        refreshIcon.setVisibility(View.VISIBLE);
+        refreshIcon.setOnClickListener(v -> onFolderRefreshClicked(folder));
     }
 
     /** Shows (or updates, if already showing) a non-cancelable "please wait" dialog with an indeterminate spinner. */
@@ -1404,6 +1425,13 @@ public class EqualizerEditorFragment extends Fragment {
         return track.artist.toLowerCase(Locale.US) + "||" + track.name.toLowerCase(Locale.US);
     }
 
+    /** Same key shape as trackKey(SpotifyTrack), null-safe - used by playlist sync to compare a SelectedEqualizer against a live Spotify track. */
+    private static String trackKey(SelectedEqualizer eq) {
+        String artist = eq.getArtist() == null ? "" : eq.getArtist();
+        String name = eq.getName() == null ? "" : eq.getName();
+        return artist.toLowerCase(Locale.US) + "||" + name.toLowerCase(Locale.US);
+    }
+
     private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
                                        Map<String, int[]> genreLevelsByTrackKey, ImportCompletionCallback onComplete) {
         if (dataHandler == null) {
@@ -1421,6 +1449,10 @@ public class EqualizerEditorFragment extends Fragment {
         }
 
         Folder folder = existingFolder != null ? existingFolder : new Folder(playlist.name, playlist.id);
+        // Seeds the stored baseline immediately with the playlist's current
+        // snapshot, rather than leaving it null - a fresh import already
+        // reflects the playlist's current contents.
+        folder.setSnapshotId(playlist.snapshotId);
         Folder finalFolder = folder;
 
         dataHandler.saveFolder(folder, new EqualizerDataHandler.OperationCallback() {
@@ -1704,6 +1736,193 @@ public class EqualizerEditorFragment extends Fragment {
                 if (!isAdded()) return;
                 dismissProgressDialog();
                 Toast.makeText(requireContext(), "Failed to import: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * The refresh icon's tap handler - the sole way playlist sync happens
+     * now (see bindFolderRefreshAction for why the automatic background
+     * version was removed). Uses the same requestSpotifyWebApiToken
+     * (interactive-login-if-needed) request pattern the working manual
+     * "Import Playlist" flow already uses.
+     */
+    private void onFolderRefreshClicked(Folder folder) {
+        if (!isAdded() || !(requireActivity() instanceof MainActivity)) return;
+
+        showProgressDialog("Checking \"" + folder.getName() + "\" for updates...");
+
+        ((MainActivity) requireActivity()).requestSpotifyWebApiToken(new MainActivity.SpotifyTokenCallback() {
+            @Override
+            public void onTokenReady(String accessToken) {
+                if (!isAdded()) return;
+                if (spotifyWebApiClient == null) {
+                    spotifyWebApiClient = new SpotifyWebApiClient();
+                }
+                syncSingleFolder(accessToken, folder);
+            }
+
+            @Override
+            public void onTokenError(String message) {
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                Toast.makeText(requireContext(), "Spotify login failed: " + message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /**
+     * Deliberately never trusts snapshot_id to decide whether it's worth
+     * checking - Spotify's own community reports confirm that field can
+     * stay stale for a while even after a playlist's actual contents
+     * already changed, which is exactly what made a quick second tap of
+     * this button silently report "nothing changed." Always fetches and
+     * diffs the real track list directly instead.
+     */
+    private void syncSingleFolder(String accessToken, Folder folder) {
+        updateProgressDialog("Syncing \"" + folder.getName() + "\"...", 0, 0);
+        spotifyWebApiClient.fetchPlaylistTracks(accessToken, folder.getSpotifyPlaylistId(), new SpotifyWebApiClient.TracksCallback() {
+            @Override
+            public void onSuccess(List<SpotifyWebApiClient.SpotifyTrack> tracks) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> {
+                    // A fresh snapshot_id is still worth grabbing for the
+                    // folder's stored baseline (keeps the automatic check's
+                    // cheap path accurate going forward) - it just isn't
+                    // gating anything here. If this particular request fails,
+                    // keep whatever baseline was already stored rather than
+                    // clobbering it with null.
+                    spotifyWebApiClient.fetchPlaylistSnapshotId(accessToken, folder.getSpotifyPlaylistId(), freshSnapshotId -> {
+                        if (!isAdded() || getActivity() == null) return;
+                        String newSnapshotId = freshSnapshotId != null ? freshSnapshotId : folder.getSnapshotId();
+                        int[] totals = new int[]{0, 0}; // [added, removed]
+                        getActivity().runOnUiThread(() -> applySyncedTracks(folder, newSnapshotId, tracks, totals, () -> {
+                            if (!isAdded()) return;
+                            dismissProgressDialog();
+                            if (totals[0] == 0 && totals[1] == 0) {
+                                Toast.makeText(requireContext(), "\"" + folder.getName() + "\" is already up to date", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(requireContext(),
+                                        "\"" + folder.getName() + "\" synced: " + totals[0] + " added"
+                                                + (totals[1] > 0 ? ", " + totals[1] + " removed" : ""),
+                                        Toast.LENGTH_LONG).show();
+                            }
+                        }));
+                    });
+                });
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_SYNC", "Manual sync failed for \"" + folder.getName() + "\"", e);
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> {
+                    dismissProgressDialog();
+                    Toast.makeText(requireContext(), "Sync failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+
+            @Override
+            public void onProgress(int fetchedSoFar, int total) {
+                if (!isAdded() || getActivity() == null) return;
+                getActivity().runOnUiThread(() -> updateProgressDialog(
+                        "Syncing \"" + folder.getName() + "\"..." + (total > 0 ? " (" + fetchedSoFar + "/" + total + ")" : ""),
+                        fetchedSoFar, total));
+            }
+        });
+    }
+
+    /**
+     * Diffs a playlist's current Spotify tracks against what's already in
+     * its folder: a current track with no matching preset in the folder is
+     * new and gets added (reusing the same findMatchingPreset dedup as a
+     * normal import - it can still link to an existing preset elsewhere in
+     * the library instead of starting at 0 dB). A folder preset with no
+     * matching current track was removed from the playlist on Spotify's
+     * side - per how this was asked for, it's detached (folderId = null),
+     * never deleted, so any EQ tuning survives even though the song left
+     * the playlist.
+     */
+    private void applySyncedTracks(Folder folder, String newSnapshotId, List<SpotifyWebApiClient.SpotifyTrack> currentTracks,
+                                    int[] totals, Runnable onDone) {
+        Set<String> currentKeys = new HashSet<>();
+        for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
+            currentKeys.add(trackKey(track));
+        }
+
+        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+        List<SelectedEqualizer> toSave = new ArrayList<>();
+        int added = 0;
+        int removed = 0;
+
+        for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
+            boolean alreadyInFolder = false;
+            for (SelectedEqualizer eq : presets) {
+                if (folder.getId().equals(eq.getFolderId()) && trackKey(eq).equals(trackKey(track))) {
+                    alreadyInFolder = true;
+                    break;
+                }
+            }
+            if (alreadyInFolder) continue;
+
+            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
+            List<Integer> initialLevels = existingMatch != null
+                    ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
+                    : zeroLevels();
+
+            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
+            eq.setFolderId(folder.getId());
+            eq.setAlbumArtUrl(track.albumArtUrl);
+            eq.setId(dataHandler.generatePresetId());
+            if (existingMatch != null) {
+                eq.setLinkedPresetId(existingMatch.getId());
+            }
+            combinedExisting.add(eq);
+            toSave.add(eq);
+            added++;
+        }
+
+        for (SelectedEqualizer eq : presets) {
+            if (!folder.getId().equals(eq.getFolderId())) continue;
+            if (currentKeys.contains(trackKey(eq))) continue;
+
+            eq.setFolderId(null);
+            toSave.add(eq);
+            removed++;
+        }
+
+        folder.setSnapshotId(newSnapshotId);
+        totals[0] += added;
+        totals[1] += removed;
+
+        EqualizerDataHandler.OperationCallback saveFolderThenDone = new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                onDone.run();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_SYNC", "Failed to update snapshot for \"" + folder.getName() + "\"", e);
+                onDone.run();
+            }
+        };
+
+        if (toSave.isEmpty()) {
+            dataHandler.saveFolder(folder, saveFolderThenDone);
+            return;
+        }
+
+        dataHandler.saveEqualizers(toSave, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                dataHandler.saveFolder(folder, saveFolderThenDone);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("PLAYLIST_SYNC", "Failed to save synced tracks for \"" + folder.getName() + "\"", e);
+                onDone.run();
             }
         });
     }

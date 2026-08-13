@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.util.Base64;
 import android.util.Log;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -22,6 +23,14 @@ import androidx.core.view.WindowInsetsCompat;
 import com.spotify.sdk.android.auth.AuthorizationClient;
 import com.spotify.sdk.android.auth.AuthorizationRequest;
 import com.spotify.sdk.android.auth.AuthorizationResponse;
+import com.spotify.sdk.android.auth.PKCEInformation;
+import com.spotify.sdk.android.auth.TokenExchangeRequest;
+import com.spotify.sdk.android.auth.TokenExchangeResponse;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -32,11 +41,17 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_NAME = "autoeq_prefs";
     private static final String PREF_BATTERY_OPT_REQUESTED = "battery_opt_requested";
 
-    // Cached Web API token for the playlist-import feature. Separate from
-    // SpotifyMonitorService's own App Remote connection - App Remote only
-    // covers local playback state, not listing/reading playlists, which
-    // needs real Web API scopes via the browser-based auth flow.
-    private String cachedWebApiToken;
+    // Web API auth for the playlist-import/sync feature - separate from
+    // SpotifyMonitorService's own App Remote connection, which only covers
+    // local playback state, not listing/reading playlists. Authorization
+    // Code + PKCE, not Implicit Grant: the latter never issues a refresh
+    // token by design, which meant any Web API work outside the exact app
+    // session that logged in (sync running after the ~1 hour access token
+    // expired, or after a full app restart) had no way to get a token
+    // without re-prompting an interactive login. SpotifyTokenStore persists
+    // the resulting token pair and silently refreshes with no UI involved.
+    private SpotifyTokenStore tokenStore;
+    private String pendingCodeVerifier;
     private SpotifyTokenCallback pendingTokenCallback;
 
     private final ActivityResultLauncher<String> notificationPermissionLauncher =
@@ -56,6 +71,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main); // sets the whole view to activity_main
+
+        tokenStore = new SpotifyTokenStore(this);
 
         getSupportFragmentManager().beginTransaction()
                 .replace(R.id.equalizer_fragment_container, new EqualizerEditorFragment())
@@ -123,26 +140,41 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Gets a Spotify Web API access token for playlist reads (listing
-     * playlists, reading their tracks). Only triggers Spotify's login screen
-     * when actually needed - the first time this is called - not on every
-     * app launch, and caches the result for the rest of the session.
+     * playlists, reading/syncing their tracks). Tries the stored session
+     * first (valid cached token, or a silent refresh if it's expired) and
+     * only falls back to Spotify's interactive login screen if neither of
+     * those produces one - so a returning user with a still-refreshable
+     * session never sees a login prompt at all, even after the access token
+     * expired or the app was fully restarted.
      */
     public void requestSpotifyWebApiToken(SpotifyTokenCallback callback) {
-        if (cachedWebApiToken != null) {
-            callback.onTokenReady(cachedWebApiToken);
-            return;
-        }
-
         if (CLIENT_ID == null || CLIENT_ID.isEmpty()) {
             callback.onTokenError("SPOTIFY_CLIENT_ID is not set in local.properties");
             return;
         }
 
+        tokenStore.getValidAccessToken(CLIENT_ID, new SpotifyTokenStore.TokenCallback() {
+            @Override
+            public void onTokenReady(String accessToken) {
+                runOnUiThread(() -> callback.onTokenReady(accessToken));
+            }
+
+            @Override
+            public void onNoValidToken() {
+                runOnUiThread(() -> startInteractiveLogin(callback));
+            }
+        });
+    }
+
+    private void startInteractiveLogin(SpotifyTokenCallback callback) {
         pendingTokenCallback = callback;
+        pendingCodeVerifier = generateCodeVerifier();
+        String codeChallenge = generateCodeChallenge(pendingCodeVerifier);
 
         AuthorizationRequest.Builder builder =
-                new AuthorizationRequest.Builder(CLIENT_ID, AuthorizationResponse.Type.TOKEN, REDIRECT_URI);
+                new AuthorizationRequest.Builder(CLIENT_ID, AuthorizationResponse.Type.CODE, REDIRECT_URI);
         builder.setScopes(new String[]{"playlist-read-private", "playlist-read-collaborative"});
+        builder.setPkceInformation(PKCEInformation.sha256(pendingCodeVerifier, codeChallenge));
         AuthorizationClient.openLoginActivity(this, WEB_API_TOKEN_REQUEST_CODE, builder.build());
     }
 
@@ -152,7 +184,9 @@ public class MainActivity extends AppCompatActivity {
 
         if (requestCode == WEB_API_TOKEN_REQUEST_CODE) {
             SpotifyTokenCallback callback = pendingTokenCallback;
+            String codeVerifier = pendingCodeVerifier;
             pendingTokenCallback = null;
+            pendingCodeVerifier = null;
             if (callback == null) return;
 
             if (intent == null) {
@@ -170,9 +204,8 @@ public class MainActivity extends AppCompatActivity {
             }
 
             switch (response.getType()) {
-                case TOKEN:
-                    cachedWebApiToken = response.getAccessToken();
-                    callback.onTokenReady(cachedWebApiToken);
+                case CODE:
+                    exchangeCodeForTokens(response.getCode(), codeVerifier, callback);
                     break;
                 case ERROR:
                     Log.e(TAG, "Spotify auth error: " + response.getError());
@@ -182,6 +215,60 @@ public class MainActivity extends AppCompatActivity {
                     callback.onTokenError("Login cancelled");
                     break;
             }
+        }
+    }
+
+    /**
+     * The other half of the PKCE handshake: trades the authorization code
+     * Spotify's login screen returned for a real access/refresh token pair.
+     * Uses the SDK's own TokenExchangeRequest rather than a hand-rolled
+     * OkHttp call - it already implements exactly this exchange (RFC 7636).
+     * Its execute() is a blocking call by its own doc comment, hence the
+     * background thread.
+     */
+    private void exchangeCodeForTokens(String code, String codeVerifier, SpotifyTokenCallback callback) {
+        if (code == null || codeVerifier == null) {
+            callback.onTokenError("Spotify login response was missing required data");
+            return;
+        }
+
+        new Thread(() -> {
+            TokenExchangeResponse result = new TokenExchangeRequest.Builder()
+                    .setClientId(CLIENT_ID)
+                    .setCode(code)
+                    .setRedirectUri(REDIRECT_URI)
+                    .setCodeVerifier(codeVerifier)
+                    .build()
+                    .execute();
+
+            runOnUiThread(() -> {
+                if (result.isSuccess()) {
+                    tokenStore.storeTokens(result.getAccessToken(), result.getRefreshToken(), result.getExpiresIn());
+                    callback.onTokenReady(result.getAccessToken());
+                } else {
+                    Log.e(TAG, "Token exchange failed: " + result.getError() + " - " + result.getErrorDescription());
+                    callback.onTokenError("Could not complete Spotify login: " + result.getError());
+                }
+            });
+        }).start();
+    }
+
+    /** 64 random bytes, base64url-encoded with no padding - within RFC 7636's required 43-128 character range for a PKCE code_verifier. */
+    private static String generateCodeVerifier() {
+        byte[] bytes = new byte[64];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.encodeToString(bytes, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+    }
+
+    /** code_challenge = BASE64URL-ENCODE(SHA256(code_verifier)), per RFC 7636's S256 method. */
+    private static String generateCodeChallenge(String codeVerifier) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(codeVerifier.getBytes(StandardCharsets.US_ASCII));
+            return Base64.encodeToString(hash, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is guaranteed available on every Android device.
+            throw new RuntimeException(e);
         }
     }
 }
