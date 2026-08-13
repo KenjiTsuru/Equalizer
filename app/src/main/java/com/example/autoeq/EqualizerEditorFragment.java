@@ -1004,10 +1004,35 @@ public class EqualizerEditorFragment extends Fragment {
             return;
         }
 
-        String[] names = new String[spotifyPlaylists.size()];
-        boolean[] checkedPlaylists = new boolean[spotifyPlaylists.size()];
-        for (int i = 0; i < spotifyPlaylists.size(); i++) {
-            names[i] = spotifyPlaylists.get(i).name;
+        // A playlist already tied to a Folder (see finishPlaylistImport) can't
+        // be picked again - re-importing it wouldn't do anything a Firebase
+        // listener update doesn't already do, and risked confusing "did that
+        // work?" re-import attempts.
+        Set<String> alreadyImportedIds = new HashSet<>();
+        for (Folder folder : folders) {
+            if (folder.getSpotifyPlaylistId() != null) alreadyImportedIds.add(folder.getSpotifyPlaylistId());
+        }
+
+        List<SpotifyWebApiClient.SpotifyPlaylist> importable = new ArrayList<>();
+        for (SpotifyWebApiClient.SpotifyPlaylist playlist : spotifyPlaylists) {
+            if (!alreadyImportedIds.contains(playlist.id)) importable.add(playlist);
+        }
+
+        int alreadyImportedCount = spotifyPlaylists.size() - importable.size();
+        if (importable.isEmpty()) {
+            Toast.makeText(requireContext(), "All " + spotifyPlaylists.size() + " playlists on this account are already imported", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (alreadyImportedCount > 0) {
+            Toast.makeText(requireContext(),
+                    "Hiding " + alreadyImportedCount + " already-imported playlist" + (alreadyImportedCount == 1 ? "" : "s"),
+                    Toast.LENGTH_SHORT).show();
+        }
+
+        String[] names = new String[importable.size()];
+        boolean[] checkedPlaylists = new boolean[importable.size()];
+        for (int i = 0; i < importable.size(); i++) {
+            names[i] = importable.get(i).name;
         }
 
         new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
@@ -1016,7 +1041,7 @@ public class EqualizerEditorFragment extends Fragment {
                 .setPositiveButton("Import", (dialog, which) -> {
                     List<SpotifyWebApiClient.SpotifyPlaylist> selected = new ArrayList<>();
                     for (int i = 0; i < checkedPlaylists.length; i++) {
-                        if (checkedPlaylists[i]) selected.add(spotifyPlaylists.get(i));
+                        if (checkedPlaylists[i]) selected.add(importable.get(i));
                     }
                     if (selected.isEmpty()) {
                         Toast.makeText(requireContext(), "No playlists selected", Toast.LENGTH_SHORT).show();

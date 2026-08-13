@@ -86,10 +86,20 @@ public class SpotifyWebApiClient {
         return base;
     }
 
-    /** GET /me/playlists - the current user's own playlists. */
+    /**
+     * GET /me/playlists - every playlist the user owns or follows, following
+     * pagination (Spotify caps each page at 50) until all pages are read.
+     * Previously fetched only the first page, which silently hid every
+     * playlist past the 50th for any account with more than that.
+     */
     public void fetchUserPlaylists(String accessToken, PlaylistsCallback callback) {
+        List<SpotifyPlaylist> collected = new ArrayList<>();
+        fetchPlaylistsPage(accessToken, BASE_URL + "/me/playlists?limit=50", collected, callback);
+    }
+
+    private void fetchPlaylistsPage(String accessToken, String url, List<SpotifyPlaylist> collected, PlaylistsCallback callback) {
         Request request = new Request.Builder()
-                .url(BASE_URL + "/me/playlists?limit=50")
+                .url(url)
                 .header("Authorization", "Bearer " + accessToken)
                 .build();
 
@@ -108,17 +118,26 @@ public class SpotifyWebApiClient {
                         return;
                     }
                     JsonObject body = JsonParser.parseString(r.body().string()).getAsJsonObject();
-                    List<SpotifyPlaylist> playlists = new ArrayList<>();
                     JsonArray items = body.getAsJsonArray("items");
                     if (items != null) {
                         for (JsonElement el : items) {
+                            // A playlist the user used to follow but lost access to
+                            // (made private, deleted by its owner, etc.) comes back
+                            // as a null entry rather than being omitted outright.
+                            if (el == null || el.isJsonNull()) continue;
                             JsonObject obj = el.getAsJsonObject();
                             String id = obj.get("id").getAsString();
                             String name = obj.get("name").getAsString();
-                            playlists.add(new SpotifyPlaylist(id, name));
+                            collected.add(new SpotifyPlaylist(id, name));
                         }
                     }
-                    callback.onSuccess(playlists);
+
+                    JsonElement nextEl = body.get("next");
+                    if (nextEl != null && !nextEl.isJsonNull()) {
+                        fetchPlaylistsPage(accessToken, nextEl.getAsString(), collected, callback);
+                    } else {
+                        callback.onSuccess(collected);
+                    }
                 } catch (Exception e) {
                     callback.onFailure(e);
                 }
