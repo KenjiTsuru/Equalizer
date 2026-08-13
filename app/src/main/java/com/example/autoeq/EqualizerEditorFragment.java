@@ -7,6 +7,8 @@ import android.media.MediaMetadataRetriever;
 import android.media.audiofx.DynamicsProcessing;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.OpenableColumns;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -60,6 +62,7 @@ public class EqualizerEditorFragment extends Fragment {
     private static final int MIN_LEVEL = Math.round(MIN_GAIN_DB * 10);
     private static final int MAX_LEVEL = Math.round(MAX_GAIN_DB * 10);
     private static final int SPAN = MAX_LEVEL - MIN_LEVEL;
+    private static final long SEARCH_DEBOUNCE_MS = 250L;
 
     // Owned by SpotifyMonitorService, not this Fragment - both systemEq and
     // spotifyService.getSystemEq() are the same object once bound. See
@@ -135,6 +138,10 @@ public class EqualizerEditorFragment extends Fragment {
     private TextView sharedTooltip;
     private SwitchCompat powerSwitch;
     private EditText searchBar;
+    // Debounces search input - see scheduleSearchRefresh for why typing
+    // without this was laggy.
+    private final Handler searchDebounceHandler = new Handler(Looper.getMainLooper());
+    private final Runnable pendingSearchRefresh = this::refreshDrawerList;
     private View btnCreateEq;
     private View btnRefreshAll;
     private View btnDeleteSelected;
@@ -190,7 +197,7 @@ public class EqualizerEditorFragment extends Fragment {
                 public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                 @Override
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
-                    refreshDrawerList();
+                    scheduleSearchRefresh();
                 }
                 @Override
                 public void afterTextChanged(android.text.Editable s) {}
@@ -346,6 +353,24 @@ public class EqualizerEditorFragment extends Fragment {
     }
 
     /** Re-renders whichever view is currently showing (search results or the normal drawer). */
+    /**
+     * Every keystroke in the search bar used to call refreshDrawerList()
+     * directly - each call clears NavigationView's whole menu and rebuilds
+     * one full-width row per matching preset from scratch (inflate +
+     * findViewById + a Glide request for its album art), all synchronously
+     * on the main thread. With a library of hundreds of presets, typing a
+     * multi-character query meant paying that full rebuild cost on every
+     * single character, most of which was immediately thrown away by the
+     * next keystroke a few milliseconds later - that's what made typing feel
+     * laggy. Debouncing so the rebuild only runs once typing actually pauses
+     * cuts that from "once per character" to "once per pause," without
+     * changing what gets shown once it settles.
+     */
+    private void scheduleSearchRefresh() {
+        searchDebounceHandler.removeCallbacks(pendingSearchRefresh);
+        searchDebounceHandler.postDelayed(pendingSearchRefresh, SEARCH_DEBOUNCE_MS);
+    }
+
     private void refreshDrawerList() {
         String query = searchBar != null ? searchBar.getText().toString() : "";
         if (query.isEmpty()) {
@@ -379,8 +404,16 @@ public class EqualizerEditorFragment extends Fragment {
         int groupId = 2;
         int dynamicId = 2000;
 
+        // Lowercased once outside the loop rather than on every preset -
+        // previously reallocated the same lowercased query string once per
+        // preset checked. Locale.US (not the device default) so search
+        // matching can't vary by locale - e.g. "I".toLowerCase() produces a
+        // dotless "ı" instead of "i" under a Turkish locale, which would
+        // otherwise silently break matching for names containing "I".
+        String normalizedQuery = query.toLowerCase(Locale.US);
+
         for (SelectedEqualizer eq : presets) {
-            if (!eq.getDisplayName().toLowerCase().contains(query.toLowerCase())) continue;
+            if (!eq.getDisplayName().toLowerCase(Locale.US).contains(normalizedQuery)) continue;
 
             android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
             item.setActionView(buildDrawerRowView(
@@ -1514,6 +1547,11 @@ public class EqualizerEditorFragment extends Fragment {
         return artist.toLowerCase(Locale.US) + "||" + name.toLowerCase(Locale.US);
     }
 
+    /** Same key shape again - extractLocalTrackInfo guarantees both fields are already non-null. */
+    private static String trackKey(LocalTrackInfo track) {
+        return track.artist.toLowerCase(Locale.US) + "||" + track.name.toLowerCase(Locale.US);
+    }
+
     private void finishPlaylistImport(SpotifyWebApiClient.SpotifyPlaylist playlist, List<SpotifyWebApiClient.SpotifyTrack> tracks,
                                        Map<String, int[]> genreLevelsByTrackKey, ImportCompletionCallback onComplete) {
         if (dataHandler == null) {
@@ -1572,18 +1610,22 @@ public class EqualizerEditorFragment extends Fragment {
         int linked = 0;
         // Tracks already queued this same import count as "existing" too, so
         // a playlist with the same song listed twice links the second one to
-        // the first instead of creating two independent presets.
-        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+        // the first instead of creating two independent presets. Indexed by
+        // key (see buildPresetIndex) rather than scanned linearly per track -
+        // a large playlist import was otherwise doing tracks x library-size
+        // comparisons.
+        Map<String, SelectedEqualizer> presetIndex = buildPresetIndex(presets);
         List<SelectedEqualizer> toSave = new ArrayList<>(tracks.size());
 
         for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
-            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
+            String key = trackKey(track);
+            SelectedEqualizer existingMatch = presetIndex.get(key);
 
             List<Integer> initialLevels;
             if (existingMatch != null) {
                 initialLevels = new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()));
             } else {
-                int[] genreLevels = genreLevelsByTrackKey != null ? genreLevelsByTrackKey.get(trackKey(track)) : null;
+                int[] genreLevels = genreLevelsByTrackKey != null ? genreLevelsByTrackKey.get(key) : null;
                 initialLevels = genreLevels != null ? toLevelList(genreLevels) : zeroLevels();
             }
 
@@ -1599,8 +1641,8 @@ public class EqualizerEditorFragment extends Fragment {
                 linked++;
             } else {
                 created++;
+                presetIndex.put(key, eq);
             }
-            combinedExisting.add(eq);
             toSave.add(eq);
         }
 
@@ -1774,11 +1816,12 @@ public class EqualizerEditorFragment extends Fragment {
 
         int created = 0;
         int linked = 0;
-        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+        Map<String, SelectedEqualizer> presetIndex = buildPresetIndex(presets);
         List<SelectedEqualizer> toSave = new ArrayList<>(tracks.size());
 
         for (LocalTrackInfo track : tracks) {
-            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
+            String key = trackKey(track);
+            SelectedEqualizer existingMatch = presetIndex.get(key);
 
             List<Integer> initialLevels = existingMatch != null
                     ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
@@ -1793,8 +1836,8 @@ public class EqualizerEditorFragment extends Fragment {
                 linked++;
             } else {
                 created++;
+                presetIndex.put(key, eq);
             }
-            combinedExisting.add(eq);
             toSave.add(eq);
         }
 
@@ -2075,39 +2118,42 @@ public class EqualizerEditorFragment extends Fragment {
             currentKeys.add(trackKey(track));
         }
 
-        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
-        List<SelectedEqualizer> toSave = new ArrayList<>();
-        List<SpotifyWebApiClient.SpotifyTrack> needsGenreMatch = new ArrayList<>();
-
-        for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
-            boolean alreadyInFolder = false;
-            for (SelectedEqualizer eq : presets) {
-                if (folder.getId().equals(eq.getFolderId()) && trackKey(eq).equals(trackKey(track))) {
-                    alreadyInFolder = true;
-                    break;
-                }
-            }
-            if (alreadyInFolder) continue;
-
-            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
-            if (existingMatch != null) {
-                SelectedEqualizer eq = buildSyncedPreset(folder, track, new ArrayList<>(nonNullLevels(existingMatch.getBandLevels())));
-                eq.setLinkedPresetId(existingMatch.getId());
-                combinedExisting.add(eq);
-                toSave.add(eq);
-            } else {
-                needsGenreMatch.add(track);
-            }
-        }
-
+        // One pass over this folder's existing presets instead of two -
+        // previously a separate O(presets) scan ran per current track just
+        // to check "is this song already in the folder" (O(tracks x presets)
+        // overall), plus another full pass afterward for removals. Both are
+        // independent per-preset checks over the same filtered subset, so
+        // they're combined into a single pass that builds both a lookup Set
+        // (O(1) membership checks below) and the removal list at once.
+        Set<String> existingKeysInFolder = new HashSet<>();
         List<String> toDelete = new ArrayList<>();
         int removed = 0;
         for (SelectedEqualizer eq : presets) {
             if (!folder.getId().equals(eq.getFolderId())) continue;
-            if (currentKeys.contains(trackKey(eq))) continue;
+            String key = trackKey(eq);
+            existingKeysInFolder.add(key);
+            if (!currentKeys.contains(key)) {
+                toDelete.add(eq.getId());
+                removed++;
+            }
+        }
 
-            toDelete.add(eq.getId());
-            removed++;
+        Map<String, SelectedEqualizer> presetIndex = buildPresetIndex(presets);
+        List<SelectedEqualizer> toSave = new ArrayList<>();
+        List<SpotifyWebApiClient.SpotifyTrack> needsGenreMatch = new ArrayList<>();
+
+        for (SpotifyWebApiClient.SpotifyTrack track : currentTracks) {
+            String key = trackKey(track);
+            if (existingKeysInFolder.contains(key)) continue;
+
+            SelectedEqualizer existingMatch = presetIndex.get(key);
+            if (existingMatch != null) {
+                SelectedEqualizer eq = buildSyncedPreset(folder, track, new ArrayList<>(nonNullLevels(existingMatch.getBandLevels())));
+                eq.setLinkedPresetId(existingMatch.getId());
+                toSave.add(eq);
+            } else {
+                needsGenreMatch.add(track);
+            }
         }
 
         folder.setSnapshotId(newSnapshotId);
@@ -2116,9 +2162,7 @@ public class EqualizerEditorFragment extends Fragment {
 
         boolean canGenreMatch = BuildConfig.LASTFM_API_KEY != null && !BuildConfig.LASTFM_API_KEY.isEmpty();
         if (needsGenreMatch.isEmpty() || !canGenreMatch) {
-            for (SpotifyWebApiClient.SpotifyTrack track : needsGenreMatch) {
-                toSave.add(buildSyncedPreset(folder, track, zeroLevels()));
-            }
+            appendNewSyncedPresets(folder, needsGenreMatch, null, toSave);
             saveSyncedTracks(folder, toSave, toDelete, onDone);
             return;
         }
@@ -2127,12 +2171,39 @@ public class EqualizerEditorFragment extends Fragment {
         Map<String, int[]> levelsByTrackKey = new HashMap<>();
         matchTrackGenresOneByOne(progressPrefix, folder.getName(), needsGenreMatch, 0, new HashMap<>(), levelsByTrackKey,
                 new GenreMatchStats(), () -> {
-                    for (SpotifyWebApiClient.SpotifyTrack track : needsGenreMatch) {
-                        int[] genreLevels = levelsByTrackKey.get(trackKey(track));
-                        toSave.add(buildSyncedPreset(folder, track, genreLevels != null ? toLevelList(genreLevels) : zeroLevels()));
-                    }
+                    appendNewSyncedPresets(folder, needsGenreMatch, levelsByTrackKey, toSave);
                     saveSyncedTracks(folder, toSave, toDelete, onDone);
                 });
+    }
+
+    /**
+     * Builds the final entries for tracks that had no existing match
+     * anywhere in the library - linking any duplicates WITHIN this same
+     * batch (the same brand-new song appearing twice in one playlist) to the
+     * first one created for that name+artist pair, rather than creating two
+     * independent presets for it. Mirrors how import (see buildPresetIndex)
+     * already dedups within its own batch; this covers the same case for
+     * tracks a sync pass is adding fresh. levelsByTrackKey is null when
+     * genre matching didn't run (no Last.fm key configured) - every track
+     * just gets zeroed levels in that case.
+     */
+    private void appendNewSyncedPresets(Folder folder, List<SpotifyWebApiClient.SpotifyTrack> tracks,
+                                         Map<String, int[]> levelsByTrackKey, List<SelectedEqualizer> toSave) {
+        Map<String, SelectedEqualizer> newlyCreated = new HashMap<>();
+        for (SpotifyWebApiClient.SpotifyTrack track : tracks) {
+            String key = trackKey(track);
+            SelectedEqualizer duplicateOfNew = newlyCreated.get(key);
+            SelectedEqualizer eq;
+            if (duplicateOfNew != null) {
+                eq = buildSyncedPreset(folder, track, new ArrayList<>(nonNullLevels(duplicateOfNew.getBandLevels())));
+                eq.setLinkedPresetId(duplicateOfNew.getId());
+            } else {
+                int[] genreLevels = levelsByTrackKey != null ? levelsByTrackKey.get(key) : null;
+                eq = buildSyncedPreset(folder, track, genreLevels != null ? toLevelList(genreLevels) : zeroLevels());
+                newlyCreated.put(key, eq);
+            }
+            toSave.add(eq);
+        }
     }
 
     private SelectedEqualizer buildSyncedPreset(Folder folder, SpotifyWebApiClient.SpotifyTrack track, List<Integer> initialLevels) {
@@ -2217,6 +2288,26 @@ public class EqualizerEditorFragment extends Fragment {
             }
         }
         return null;
+    }
+
+    /**
+     * O(1) name+artist -> preset lookup for type-0 presets, resolving each
+     * straight to its real data owner (see resolveDataSource) - the same
+     * thing findMatchingPreset's linear scan does per call, but built once
+     * per import/sync batch instead of rescanning the whole preset list for
+     * every single track. A batch importing/syncing N tracks against a
+     * library of M presets was doing up to N x M comparisons; building this
+     * once and doing a HashMap lookup per track makes it N + M instead.
+     * First occurrence for a given key wins, same as findMatchingPreset's
+     * own linear-scan order.
+     */
+    private Map<String, SelectedEqualizer> buildPresetIndex(List<SelectedEqualizer> source) {
+        Map<String, SelectedEqualizer> index = new HashMap<>();
+        for (SelectedEqualizer eq : source) {
+            if (eq.getType() != 0) continue;
+            index.putIfAbsent(trackKey(eq), resolveDataSource(eq));
+        }
+        return index;
     }
 
     private static List<Integer> zeroLevels() {
@@ -2514,6 +2605,7 @@ public class EqualizerEditorFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        searchDebounceHandler.removeCallbacks(pendingSearchRefresh);
         if (dataHandler != null) {
             dataHandler.stopListening();
         }
