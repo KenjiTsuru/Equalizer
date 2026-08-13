@@ -52,7 +52,7 @@ import java.util.Set;
 
 public class EqualizerEditorFragment extends Fragment {
 
-    // EQ shape: 12 bands, log-spaced 30 Hz-8000 Hz, +/-12 dB range. Stored and
+    // EQ shape: 12 bands, log-spaced 30 Hz-12000 Hz, +/-12 dB range. Stored and
     // passed around as tenths-of-a-dB integers (e.g. 35 = 3.5 dB) so
     // SelectedEqualizer's List<Integer> and the SeekBar's integer progress
     // don't need to change shape just because DynamicsProcessing's native
@@ -2595,11 +2595,28 @@ public class EqualizerEditorFragment extends Fragment {
         return String.format(Locale.US, "%.1f dB", levelToGainDb(level));
     }
 
-    private static String formatFrequencyLabel(float freqHz) {
+    /**
+     * The number is what actually matters when scanning the band row - the
+     * unit is just there to disambiguate Hz from kHz, so it's shrunk
+     * relative to the number rather than sharing its size. Without this,
+     * longer labels like "12.0 kHz" were wide enough to wrap and overlap
+     * themselves in the narrow per-band column.
+     */
+    private static CharSequence formatFrequencyLabel(float freqHz) {
+        String number;
+        String unit;
         if (freqHz >= 1000f) {
-            return String.format(Locale.US, "%.1f kHz", freqHz / 1000f);
+            number = String.format(Locale.US, "%.1f", freqHz / 1000f);
+            unit = " kHz";
+        } else {
+            number = String.valueOf(Math.round(freqHz));
+            unit = " Hz";
         }
-        return Math.round(freqHz) + " Hz";
+        String full = number + unit;
+        android.text.SpannableString label = new android.text.SpannableString(full);
+        label.setSpan(new android.text.style.RelativeSizeSpan(0.7f), number.length(), full.length(),
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return label;
     }
 
     @Override
