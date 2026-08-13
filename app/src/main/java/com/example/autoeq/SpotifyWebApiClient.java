@@ -27,7 +27,7 @@ import okhttp3.Response;
 public class SpotifyWebApiClient {
     private static final String TAG = "SpotifyWebApiClient";
     private static final String BASE_URL = "https://api.spotify.com/v1";
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient = NetworkClients.SHARED;
 
     public interface PlaylistsCallback {
         void onSuccess(List<SpotifyPlaylist> playlists);

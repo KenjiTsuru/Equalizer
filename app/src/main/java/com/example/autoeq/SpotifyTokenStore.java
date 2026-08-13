@@ -48,7 +48,7 @@ public class SpotifyTokenStore {
     private static final long EXPIRY_BUFFER_MS = 60_000L;
 
     private final SharedPreferences prefs;
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient = NetworkClients.SHARED;
 
     public interface TokenCallback {
         void onTokenReady(String accessToken);

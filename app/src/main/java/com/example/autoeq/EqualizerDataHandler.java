@@ -1,6 +1,7 @@
 package com.example.autoeq;
 
 import android.util.Log;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
@@ -33,6 +34,16 @@ public class EqualizerDataHandler {
     public interface OperationCallback {
         void onSuccess();
         void onFailure(Exception e);
+    }
+
+    /** Bridges a Firebase write Task into an OperationCallback - shared by every write method below instead of each repeating the same addOnSuccessListener/addOnFailureListener pair. */
+    private static void bridge(Task<Void> task, OperationCallback callback) {
+        task.addOnSuccessListener(aVoid -> {
+                    if (callback != null) callback.onSuccess();
+                })
+                .addOnFailureListener(e -> {
+                    if (callback != null) callback.onFailure(e);
+                });
     }
 
     public EqualizerDataHandler() {
@@ -78,13 +89,7 @@ public class EqualizerDataHandler {
             return;
         }
 
-        userDbRef.child(presetId).child("bandLevels").setValue(bandLevels)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(userDbRef.child(presetId).child("bandLevels").setValue(bandLevels), callback);
     }
 
     /**
@@ -103,13 +108,7 @@ public class EqualizerDataHandler {
             return;
         }
 
-        userDbRef.child(presetId).child("folderId").setValue(folderId)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(userDbRef.child(presetId).child("folderId").setValue(folderId), callback);
     }
 
     public void saveEqualizer(SelectedEqualizer equalizer, OperationCallback callback) {
@@ -126,14 +125,7 @@ public class EqualizerDataHandler {
         String presetId = userDbRef.push().getKey();
         if (presetId != null) {
             equalizer.setId(presetId);
-
-            userDbRef.child(presetId).setValue(equalizer)
-                    .addOnSuccessListener(aVoid -> {
-                        if (callback != null) callback.onSuccess();
-                    })
-                    .addOnFailureListener(e -> {
-                        if (callback != null) callback.onFailure(e);
-                    });
+            bridge(userDbRef.child(presetId).setValue(equalizer), callback);
         } else if (callback != null) {
             callback.onFailure(new IllegalStateException("Could not generate a preset ID"));
         }
@@ -170,13 +162,7 @@ public class EqualizerDataHandler {
             updates.put(eq.getId(), eq);
         }
 
-        userDbRef.updateChildren(updates)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(userDbRef.updateChildren(updates), callback);
     }
 
     /** Deletes many presets in one multi-location update - see saveEqualizers for why this matters for multi-select delete. Setting a child to null via updateChildren deletes it, same as removeValue(). */
@@ -196,13 +182,7 @@ public class EqualizerDataHandler {
             updates.put(id, null);
         }
 
-        userDbRef.updateChildren(updates)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(userDbRef.updateChildren(updates), callback);
     }
 
     /** Deletes many folders in one multi-location update - see saveEqualizers for why this matters for multi-select delete. */
@@ -222,13 +202,7 @@ public class EqualizerDataHandler {
             updates.put(id, null);
         }
 
-        folderDbRef.updateChildren(updates)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(folderDbRef.updateChildren(updates), callback);
     }
 
     public void listenToPresets(PresetsListener listener) {
@@ -287,13 +261,7 @@ public class EqualizerDataHandler {
             folder.setId(folderId);
         }
 
-        folderDbRef.child(folderId).setValue(folder)
-                .addOnSuccessListener(aVoid -> {
-                    if (callback != null) callback.onSuccess();
-                })
-                .addOnFailureListener(e -> {
-                    if (callback != null) callback.onFailure(e);
-                });
+        bridge(folderDbRef.child(folderId).setValue(folder), callback);
     }
 
     public void listenToFolders(FoldersListener listener) {

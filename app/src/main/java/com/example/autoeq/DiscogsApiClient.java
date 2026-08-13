@@ -52,7 +52,7 @@ public class DiscogsApiClient {
     // average limit and draw a 429.
     private static final long MIN_REQUEST_SPACING_MS = 1100;
 
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient = NetworkClients.SHARED;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private long nextRequestAtMs = 0;
 

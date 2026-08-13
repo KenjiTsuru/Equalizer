@@ -3,7 +3,6 @@ package com.example.autoeq.models;
 public class User {
     public String name;
     public String email;
-    public String bio;
 
     public User() {
     }
@@ -16,6 +15,4 @@ public class User {
     // Getters
     public String getName() { return name; }
     public String getEmail() { return email; }
-    public String getBio() { return bio; }
-
 }

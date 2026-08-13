@@ -1138,6 +1138,8 @@ public class EqualizerEditorFragment extends Fragment {
      * upstream, or a GenrePresets bucket that needs adding.
      */
     private static final class GenreMatchStats {
+        private static final int MAX_UNMATCHED_ENTRIES_SHOWN = 25;
+
         int songsChecked;
         int songsWithTagData;
         int songsMatched;
@@ -1175,8 +1177,17 @@ public class EqualizerEditorFragment extends Fragment {
             if (!unmatchedWithTags.isEmpty()) {
                 sb.append("\n\n").append(unmatchedWithTags.size()).append(" song").append(unmatchedWithTags.size() == 1 ? "" : "s")
                         .append(" had tags, but none matched a genre preset:");
-                for (String entry : unmatchedWithTags) {
-                    sb.append("\n• ").append(entry);
+                // Capped, not the full list - a large playlist with many
+                // misses could otherwise turn this into an unreadable wall
+                // of text (and a surprisingly large string to build/hold)
+                // instead of a quick diagnostic glance.
+                int shown = Math.min(unmatchedWithTags.size(), MAX_UNMATCHED_ENTRIES_SHOWN);
+                for (int i = 0; i < shown; i++) {
+                    sb.append("\n• ").append(unmatchedWithTags.get(i));
+                }
+                int remaining = unmatchedWithTags.size() - shown;
+                if (remaining > 0) {
+                    sb.append("\n... and ").append(remaining).append(" more");
                 }
             }
             return sb.toString();

@@ -2,7 +2,6 @@ package com.example.autoeq;
 
 import android.util.Log;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -44,7 +43,7 @@ import okhttp3.Response;
 public class LastFmApiClient {
     private static final String TAG = "LastFmApiClient";
     private static final String BASE_URL = "https://ws.audioscrobbler.com/2.0/";
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient = NetworkClients.SHARED;
 
     public interface TagsCallback {
         /** Always called, even on a network error, an API error, or no match - tags is simply empty in every one of those cases, indistinguishable from a real "no tags" result. */
