@@ -1374,7 +1374,8 @@ public class EqualizerEditorFragment extends Fragment {
 
         SpotifyWebApiClient.SpotifyTrack track = tracks.get(index);
         String key = trackKey(track);
-        updateProgressDialog(progressPrefix + "Matching genres for \"" + playlist.name + "\" (" + index + "/" + tracks.size() + ")...",
+        updateProgressDialog(progressPrefix + "Matching genres for \"" + playlist.name + "\" (" + index + "/" + tracks.size() + ")..."
+                        + "\n\nSit tight, this might take a couple minutes.",
                 index, tracks.size());
 
         if (tagCache.containsKey(key)) {
