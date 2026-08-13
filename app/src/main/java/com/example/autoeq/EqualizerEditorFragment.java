@@ -154,6 +154,7 @@ public class EqualizerEditorFragment extends Fragment {
         bandsContainer = view.findViewById(R.id.eq_bands_row);
         curveView = view.findViewById(R.id.eq_curve_view);
         presetNameText = view.findViewById(R.id.eq_preset_name);
+        presetNameText.setOnClickListener(v -> showSongOptionsDialog());
         sharedTooltip = view.findViewById(R.id.eq_shared_tooltip);
 
         toolbar.setNavigationIcon(R.drawable.ic_hamburger_menu);
@@ -1616,6 +1617,60 @@ public class EqualizerEditorFragment extends Fragment {
 
         sharedTooltip.setX(targetX);
         sharedTooltip.setY(targetY);
+    }
+
+    /**
+     * Tapping the song/artist name in the toolbar brings up actions scoped to
+     * that one preset - just "Reset EQ" for now, styled as a list so more can
+     * be added later without changing the entry point.
+     */
+    private void showSongOptionsDialog() {
+        if (currentEq == null) return;
+
+        String[] options = {"Reset EQ"};
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle(currentEq.getDisplayName())
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) showResetEqConfirmation();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showResetEqConfirmation() {
+        if (currentEq == null) return;
+
+        new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
+                .setTitle("Reset EQ?")
+                .setMessage("Set every band back to 0 dB for \"" + currentEq.getDisplayName() + "\"?")
+                .setNegativeButton("No", null)
+                .setPositiveButton("Yes", (dialog, which) -> resetCurrentEqToZero())
+                .show();
+    }
+
+    /**
+     * Drives every band's seekbar back to the 0 dB position rather than
+     * writing zeroed levels straight to systemEq/Firebase directly - going
+     * through SeekBar.setProgress() reuses the exact same
+     * onProgressChanged path a manual drag takes (live audio engine +
+     * curve view + currentEq all update together), so this can't drift out
+     * of sync with that logic. setProgress() doesn't trigger a save on its
+     * own (only onStopTrackingTouch does, and this isn't a touch gesture),
+     * hence the explicit persistCurrentBandLevels() call after.
+     */
+    private void resetCurrentEqToZero() {
+        if (bandsContainer == null || currentEq == null) return;
+
+        int zeroProgress = -MIN_LEVEL; // 0 dB, offset into the seekbar's 0..SPAN range
+        for (int band = 0; band < EqBandConfig.NUM_BANDS; band++) {
+            View bandView = bandsContainer.getChildAt(band);
+            if (bandView == null) continue;
+            SeekBar sb = bandView.findViewById(R.id.eq_band_seekbar);
+            if (sb != null) sb.setProgress(zeroProgress);
+        }
+
+        persistCurrentBandLevels();
+        Toast.makeText(requireContext(), "Reset \"" + currentEq.getDisplayName() + "\" to 0 dB", Toast.LENGTH_SHORT).show();
     }
 
     /**
