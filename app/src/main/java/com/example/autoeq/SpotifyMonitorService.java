@@ -277,7 +277,7 @@ public class SpotifyMonitorService extends Service {
     private void onTrackChanged(String songName, String artistName) {
         if (systemEq == null) return;
 
-        SelectedEqualizer match = findPresetForTrack(songName, artistName);
+        SelectedEqualizer match = resolveDataSource(findPresetForTrack(songName, artistName));
 
         if (match != null) {
             systemEq.setEnabled(true);
@@ -305,6 +305,27 @@ public class SpotifyMonitorService extends Service {
             }
         }
         return null;
+    }
+
+    /**
+     * Follows linkedPresetId to the real data owner - same logic as
+     * EqualizerEditorFragment's resolveDataSource, duplicated here rather
+     * than shared since the two classes keep independent copies of the
+     * preset list. Matters a lot for this specific matching path: a song
+     * already imported from a Spotify playlist that's also imported as a
+     * local file becomes a linked duplicate (existing dedup behavior, see
+     * findMatchingPreset), and only the real owner's bandLevels reflect
+     * edits made since - the duplicate's own copy can go stale. Applying it
+     * unresolved would silently apply an outdated EQ.
+     */
+    private SelectedEqualizer resolveDataSource(SelectedEqualizer eq) {
+        if (eq == null || eq.getLinkedPresetId() == null) return eq;
+        for (SelectedEqualizer candidate : presets) {
+            if (eq.getLinkedPresetId().equals(candidate.getId())) {
+                return candidate;
+            }
+        }
+        return eq;
     }
 
     private void createNotificationChannel() {

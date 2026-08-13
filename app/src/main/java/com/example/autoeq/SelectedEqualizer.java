@@ -15,6 +15,7 @@ public class SelectedEqualizer {
     // otherwise it's a UI-only duplicate whose real
     // data lives on the preset with this id
     private String albumArtUrl; // null unless imported from a Spotify playlist - see SpotifyWebApiClient.SpotifyTrack
+    private String source; // "local" if imported from an on-device file (see EqualizerEditorFragment#importLocalTracks); null for Spotify imports/manually-created presets
 
     public SelectedEqualizer() {}
 
@@ -95,5 +96,13 @@ public class SelectedEqualizer {
 
     public void setAlbumArtUrl(String albumArtUrl) {
         this.albumArtUrl = albumArtUrl;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
     }
 }

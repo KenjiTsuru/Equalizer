@@ -6,6 +6,7 @@ public class Folder {
     private String id;
     private String name;
     private String spotifyPlaylistId; // null if manually created, set if imported from a playlist
+    private String source; // "local" for the single reusable folder local file imports land in (see EqualizerEditorFragment#findOrCreateLocalFilesFolder); null otherwise
 
     public Folder() {}
 
@@ -37,5 +38,13 @@ public class Folder {
 
     public void setSpotifyPlaylistId(String spotifyPlaylistId) {
         this.spotifyPlaylistId = spotifyPlaylistId;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
     }
 }

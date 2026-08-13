@@ -3,8 +3,14 @@ package com.example.autoeq;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
+import android.media.MediaMetadataRetriever;
 import android.media.audiofx.DynamicsProcessing;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.SwitchCompat;
@@ -115,6 +121,12 @@ public class EqualizerEditorFragment extends Fragment {
     private SpotifyWebApiClient spotifyWebApiClient;
     private LastFmApiClient lastFmApiClient;
     private DiscogsApiClient discogsApiClient;
+
+    // Registered as a field initializer (not inside a click handler) since
+    // AndroidX requires every ActivityResultLauncher to be registered before
+    // the Fragment reaches STARTED - doing it lazily on first tap would throw.
+    private final ActivityResultLauncher<String[]> localFilePickerLauncher =
+            registerForActivityResult(new ActivityResultContracts.OpenMultipleDocuments(), this::onLocalFilesPicked);
 
     private View emptyStateText;
     private View eqUiContainer;
@@ -364,7 +376,7 @@ public class EqualizerEditorFragment extends Fragment {
             android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
             item.setActionView(buildDrawerRowView(
                     eq.getDisplayName(),
-                    android.R.drawable.ic_media_next,
+                    presetFallbackIcon(eq),
                     resolveAlbumArtUrl(eq),
                     selectedPresetIds.contains(eq.getId()),
                     v -> onPresetRowClicked(eq),
@@ -407,7 +419,7 @@ public class EqualizerEditorFragment extends Fragment {
                 android.view.MenuItem presetItem = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
                 presetItem.setActionView(buildDrawerRowView(
                         "     " + eq.getDisplayName(),
-                        android.R.drawable.ic_media_next,
+                        presetFallbackIcon(eq),
                         resolveAlbumArtUrl(eq),
                         selectedPresetIds.contains(eq.getId()),
                         v -> onPresetRowClicked(eq),
@@ -422,7 +434,7 @@ public class EqualizerEditorFragment extends Fragment {
             android.view.MenuItem item = menu.add(groupId, dynamicId++, android.view.Menu.NONE, "");
             item.setActionView(buildDrawerRowView(
                     eq.getDisplayName(),
-                    android.R.drawable.ic_media_next,
+                    presetFallbackIcon(eq),
                     resolveAlbumArtUrl(eq),
                     selectedPresetIds.contains(eq.getId()),
                     v -> onPresetRowClicked(eq),
@@ -517,6 +529,18 @@ public class EqualizerEditorFragment extends Fragment {
     private String resolveAlbumArtUrl(SelectedEqualizer eq) {
         SelectedEqualizer dataSource = resolveDataSource(eq);
         return dataSource != null ? dataSource.getAlbumArtUrl() : null;
+    }
+
+    /**
+     * A local-file import (see importLocalTracks) never has album art, so it
+     * always falls into buildDrawerRowView's fallback-icon branch - this is
+     * what makes it visually distinct from a Spotify-imported or manually
+     * created preset in the drawer, without needing a separate badge/overlay.
+     */
+    private int presetFallbackIcon(SelectedEqualizer eq) {
+        SelectedEqualizer dataSource = resolveDataSource(eq);
+        String source = dataSource != null ? dataSource.getSource() : null;
+        return "local".equals(source) ? R.drawable.ic_local_file : android.R.drawable.ic_media_next;
     }
 
     /** Shows (or updates, if already showing) a non-cancelable "please wait" dialog with an indeterminate spinner. */
@@ -809,13 +833,14 @@ public class EqualizerEditorFragment extends Fragment {
 
     /** The "+" button: choose what to add. */
     private void showCreateChooserDialog() {
-        String[] options = {"New Preset", "New Folder", "Import Playlist"};
+        String[] options = {"New Preset", "New Folder", "Import Playlist", "Import from Files"};
         new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_AutoEQ_Dialog)
                 .setTitle("Add New")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) showCreateEqualizerDialog();
                     else if (which == 1) showCreateFolderDialog();
-                    else showImportPlaylistDialog();
+                    else if (which == 2) showImportPlaylistDialog();
+                    else localFilePickerLauncher.launch(new String[]{"audio/*"});
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1479,6 +1504,206 @@ public class EqualizerEditorFragment extends Fragment {
                 Log.e("PLAYLIST_IMPORT", "Failed to save imported presets for \"" + folder.getName() + "\"", e);
                 if (!isAdded()) return;
                 onComplete.onComplete(0, 0);
+            }
+        });
+    }
+
+    /** Name + artist read from an on-device audio file's metadata (or guessed from its filename), before it becomes a SelectedEqualizer. */
+    private static final class LocalTrackInfo {
+        final String name;
+        final String artist;
+        LocalTrackInfo(String name, String artist) {
+            this.name = name;
+            this.artist = artist;
+        }
+    }
+
+    /**
+     * Callback for the SAF multi-file picker (see localFilePickerLauncher).
+     * No READ_EXTERNAL_STORAGE/READ_MEDIA_AUDIO permission is needed for
+     * this - Storage Access Framework grants read access to exactly the
+     * files the user picks, for as long as this activity is alive, which is
+     * all reading tags once at import time needs.
+     */
+    private void onLocalFilesPicked(List<Uri> uris) {
+        if (uris == null || uris.isEmpty() || !isAdded()) return;
+        if (dataHandler == null) {
+            dataHandler = new EqualizerDataHandler();
+        }
+
+        showProgressDialog("Reading " + uris.size() + " file" + (uris.size() == 1 ? "" : "s") + "...");
+
+        // Tag reading is file I/O (MediaMetadataRetriever), so it happens off
+        // the UI thread - same reasoning as everywhere else in this file that
+        // hops to a background thread/dispatcher before touching the network
+        // or disk, just a plain Thread here since there's no OkHttp call to
+        // ride along with.
+        new Thread(() -> {
+            List<LocalTrackInfo> tracks = new ArrayList<>(uris.size());
+            for (Uri uri : uris) {
+                tracks.add(extractLocalTrackInfo(uri));
+            }
+            if (!isAdded() || getActivity() == null) return;
+            getActivity().runOnUiThread(() -> findOrCreateLocalFilesFolder(folder -> importLocalTracks(folder, tracks)));
+        }).start();
+    }
+
+    private interface FolderReadyCallback {
+        void onReady(Folder folder);
+    }
+
+    private static final String LOCAL_FILES_FOLDER_NAME = "Local Files";
+
+    /**
+     * Every local-file import shares this one folder rather than getting its
+     * own, unlike Spotify playlists - a picked batch of files has no single
+     * name/ID to build a per-import folder around (see the "why did you
+     * leave out folder auto generation" conversation this came out of).
+     * Matched by the source marker, not by name, so the user renaming this
+     * folder later doesn't cause a second one to get created next time.
+     */
+    private void findOrCreateLocalFilesFolder(FolderReadyCallback callback) {
+        for (Folder folder : folders) {
+            if ("local".equals(folder.getSource())) {
+                callback.onReady(folder);
+                return;
+            }
+        }
+
+        Folder newFolder = new Folder(LOCAL_FILES_FOLDER_NAME, null);
+        newFolder.setSource("local");
+        dataHandler.saveFolder(newFolder, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                if (isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() -> callback.onReady(newFolder));
+                }
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("LOCAL_IMPORT", "Could not create \"" + LOCAL_FILES_FOLDER_NAME + "\" folder", e);
+                if (isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() -> callback.onReady(null));
+                }
+            }
+        });
+    }
+
+    private LocalTrackInfo extractLocalTrackInfo(Uri uri) {
+        String title = null;
+        String artist = null;
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(requireContext(), uri);
+            title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
+            artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+        } catch (Exception e) {
+            Log.w("LOCAL_IMPORT", "Failed to read tags from " + uri, e);
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+                // release() itself throwing isn't something a caller can act on.
+            }
+        }
+
+        if (title == null || title.isEmpty()) title = displayNameFromUri(uri);
+        // Empty, not "Unknown Artist" - Spotify's own local-files feature
+        // represents a missing artist tag as an empty string (its local file
+        // URI is literally spotify:local:{artist}:{album}:{title}:{duration},
+        // blank when untagged), and getDisplayName() already omits the " -
+        // artist" suffix entirely when artist is empty. Falling back to a
+        // literal "Unknown Artist" string here would silently break matching
+        // against that same file played as a Spotify local file, since the
+        // two sides would disagree on what the artist is.
+        if (artist == null) artist = "";
+        return new LocalTrackInfo(title, artist);
+    }
+
+    /** Falls back to the file's display name (extension stripped) for files with no TITLE tag - an untagged .mp3 shouldn't just disappear from the import. */
+    private String displayNameFromUri(Uri uri) {
+        String displayName = null;
+        try (Cursor cursor = requireContext().getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) displayName = cursor.getString(nameIndex);
+            }
+        } catch (Exception e) {
+            Log.w("LOCAL_IMPORT", "Failed to read display name for " + uri, e);
+        }
+        if (displayName == null) displayName = uri.getLastPathSegment();
+        if (displayName == null) return "Untitled";
+
+        int dot = displayName.lastIndexOf('.');
+        return dot > 0 ? displayName.substring(0, dot) : displayName;
+    }
+
+    /**
+     * Same batch-build-then-one-write shape as importTracksIntoFolder, and
+     * reuses the exact same findMatchingPreset dedup logic - a local file
+     * that matches an existing Spotify-imported (or manually created) preset
+     * by song+artist links to it exactly like a duplicate Spotify track
+     * would, rather than starting over at 0 dB. No genre EQ lookup - out of
+     * scope for this import path per how it was asked for. Every import
+     * lands in the same shared folder (see findOrCreateLocalFilesFolder).
+     */
+    private void importLocalTracks(Folder folder, List<LocalTrackInfo> tracks) {
+        if (folder == null) {
+            dismissProgressDialog();
+            Toast.makeText(requireContext(), "Could not create the \"" + LOCAL_FILES_FOLDER_NAME + "\" folder", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        updateProgressDialog("Saving " + tracks.size() + " song" + (tracks.size() == 1 ? "" : "s")
+                + " into \"" + folder.getName() + "\"...", 0, 0);
+
+        int created = 0;
+        int linked = 0;
+        List<SelectedEqualizer> combinedExisting = new ArrayList<>(presets);
+        List<SelectedEqualizer> toSave = new ArrayList<>(tracks.size());
+
+        for (LocalTrackInfo track : tracks) {
+            SelectedEqualizer existingMatch = findMatchingPreset(track.name, track.artist, 0, combinedExisting);
+
+            List<Integer> initialLevels = existingMatch != null
+                    ? new ArrayList<>(nonNullLevels(existingMatch.getBandLevels()))
+                    : zeroLevels();
+
+            SelectedEqualizer eq = new SelectedEqualizer(track.name, track.artist, 0, initialLevels);
+            eq.setSource("local");
+            eq.setFolderId(folder.getId());
+            eq.setId(dataHandler.generatePresetId());
+            if (existingMatch != null) {
+                eq.setLinkedPresetId(existingMatch.getId());
+                linked++;
+            } else {
+                created++;
+            }
+            combinedExisting.add(eq);
+            toSave.add(eq);
+        }
+
+        int finalCreated = created;
+        int finalLinked = linked;
+        dataHandler.saveEqualizers(toSave, new EqualizerDataHandler.OperationCallback() {
+            @Override
+            public void onSuccess() {
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                int total = finalCreated + finalLinked;
+                Toast.makeText(requireContext(),
+                        "Imported " + total + " song" + (total == 1 ? "" : "s") + " into \"" + folder.getName() + "\""
+                                + (finalLinked > 0 ? " (" + finalLinked + " linked to existing presets)" : ""),
+                        Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                Log.e("LOCAL_IMPORT", "Failed to save imported local files", e);
+                if (!isAdded()) return;
+                dismissProgressDialog();
+                Toast.makeText(requireContext(), "Failed to import: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
     }
