@@ -27,13 +27,24 @@ public class LoginActivity extends AppCompatActivity {
     private Button loginButton;
     private TextView signUpLink, statusMessage, forgotPasswordLink;
     private FirebaseAuth auth;
+    private boolean redirectingToMain = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_login);
 
         auth = FirebaseAuth.getInstance();
+
+        // Already logged in: skip the login screen entirely instead of
+        // flashing it before the "Welcome back" swap-out.
+        if (auth.getCurrentUser() != null) {
+            redirectingToMain = true;
+            startActivity(new Intent(this, MainActivity.class));
+            finish();
+            return;
+        }
+
+        setContentView(R.layout.activity_login);
 
         initViews();
         setupListeners();
@@ -42,6 +53,9 @@ public class LoginActivity extends AppCompatActivity {
     @Override
     public void onStart() {
         super.onStart();
+        if (redirectingToMain) {
+            return;
+        }
         // AT-7: Check if user is signed in (non-null) and update UI accordingly.
         FirebaseUser currentUser = auth.getCurrentUser();
         if (currentUser != null) {
