@@ -144,6 +144,7 @@ public class EqualizerEditorFragment extends Fragment {
     private final Runnable pendingSearchRefresh = this::refreshDrawerList;
     private View btnCreateEq;
     private View btnRefreshAll;
+    private View btnRefreshSelected;
     private View btnDeleteSelected;
     private View btnMoveSelected;
     private View btnExitSelection;
@@ -186,6 +187,7 @@ public class EqualizerEditorFragment extends Fragment {
         // NavigationView's scrolling menu instead of scrolling away with it.
         btnCreateEq = view.findViewById(R.id.btn_create_eq);
         btnRefreshAll = view.findViewById(R.id.btn_refresh_all);
+        btnRefreshSelected = view.findViewById(R.id.btn_refresh_selected);
         btnDeleteSelected = view.findViewById(R.id.btn_delete_selected);
         btnMoveSelected = view.findViewById(R.id.btn_move_selected);
         btnExitSelection = view.findViewById(R.id.btn_exit_selection);
@@ -213,6 +215,10 @@ public class EqualizerEditorFragment extends Fragment {
 
         if (btnRefreshAll != null) {
             btnRefreshAll.setOnClickListener(v -> refreshAllFolders());
+        }
+
+        if (btnRefreshSelected != null) {
+            btnRefreshSelected.setOnClickListener(v -> refreshSelectedFolders());
         }
 
         if (btnDeleteSelected != null) {
@@ -452,7 +458,7 @@ public class EqualizerEditorFragment extends Fragment {
                     v -> onFolderRowClicked(folder),
                     v -> onFolderRowLongClicked(folder)
             );
-            bindFolderRefreshAction(folderRow, folder);
+            bindFolderRefreshAction(folderRow, folder, expanded);
             folderItem.setActionView(folderRow);
 
             if (!expanded) continue;
@@ -597,12 +603,18 @@ public class EqualizerEditorFragment extends Fragment {
      * unreliable both for auto-applying changes and for deciding when to
      * light this icon up, and the manual tap alone was already proven to
      * work correctly on its own.
+     *
+     * Only shown once the folder is opened (expanded), next to its name -
+     * collapsed rows stay uncluttered, and it's one of three ways to sync
+     * now alongside the multi-select "refresh selected" and header's
+     * "refresh all". Hidden in selection mode too, where the top-left
+     * "refresh selected" button is the right action instead.
      */
-    private void bindFolderRefreshAction(View row, Folder folder) {
+    private void bindFolderRefreshAction(View row, Folder folder, boolean expanded) {
         ImageView refreshIcon = row.findViewById(R.id.row_refresh_icon);
         if (refreshIcon == null || folder.getSpotifyPlaylistId() == null) return;
 
-        refreshIcon.setVisibility(View.VISIBLE);
+        refreshIcon.setVisibility(expanded && !selectionMode ? View.VISIBLE : View.GONE);
         refreshIcon.setOnClickListener(v -> onFolderRefreshClicked(folder));
     }
 
@@ -707,6 +719,7 @@ public class EqualizerEditorFragment extends Fragment {
         }
         if (btnCreateEq != null) btnCreateEq.setVisibility(enabled ? View.GONE : View.VISIBLE);
         if (btnRefreshAll != null) btnRefreshAll.setVisibility(enabled ? View.GONE : View.VISIBLE);
+        if (btnRefreshSelected != null) btnRefreshSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
         if (btnDeleteSelected != null) btnDeleteSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
         if (btnMoveSelected != null) btnMoveSelected.setVisibility(enabled ? View.VISIBLE : View.GONE);
         if (btnExitSelection != null) btnExitSelection.setVisibility(enabled ? View.VISIBLE : View.GONE);
@@ -1985,8 +1998,6 @@ public class EqualizerEditorFragment extends Fragment {
      * that per-folder icon is still here rather than being replaced by this.
      */
     private void refreshAllFolders() {
-        if (!isAdded() || !(requireActivity() instanceof MainActivity)) return;
-
         List<Folder> spotifyFolders = new ArrayList<>();
         for (Folder folder : folders) {
             if (folder.getSpotifyPlaylistId() != null) spotifyFolders.add(folder);
@@ -1995,8 +2006,38 @@ public class EqualizerEditorFragment extends Fragment {
             Toast.makeText(requireContext(), "No imported playlists to refresh", Toast.LENGTH_SHORT).show();
             return;
         }
+        syncFolders(spotifyFolders, "Checking playlists for updates...");
+    }
 
-        showProgressDialog("Checking playlists for updates...");
+    /**
+     * The multi-select counterpart to the header's "refresh all" and a
+     * folder's own expanded-row refresh icon - long-press to select one or
+     * more playlists, then tap this instead of refreshing them one at a
+     * time. Only Spotify-linked folders among the selection are actionable;
+     * any selected presets or manually-created folders are silently
+     * ignored rather than erroring, since they were never refreshable.
+     */
+    private void refreshSelectedFolders() {
+        List<Folder> targets = new ArrayList<>();
+        for (Folder folder : folders) {
+            if (selectedFolderIds.contains(folder.getId()) && folder.getSpotifyPlaylistId() != null) {
+                targets.add(folder);
+            }
+        }
+        if (targets.isEmpty()) {
+            Toast.makeText(requireContext(), "No linked playlists selected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        setSelectionMode(false);
+        refreshDrawerList();
+        syncFolders(targets, "Checking selected playlists for updates...");
+    }
+
+    private void syncFolders(List<Folder> targets, String initialMessage) {
+        if (!isAdded() || !(requireActivity() instanceof MainActivity)) return;
+
+        showProgressDialog(initialMessage);
 
         ((MainActivity) requireActivity()).requestSpotifyWebApiToken(new MainActivity.SpotifyTokenCallback() {
             @Override
@@ -2005,7 +2046,7 @@ public class EqualizerEditorFragment extends Fragment {
                 if (spotifyWebApiClient == null) {
                     spotifyWebApiClient = new SpotifyWebApiClient();
                 }
-                syncFoldersSequentially(accessToken, spotifyFolders, 0, new int[]{0, 0}, new int[]{0});
+                syncFoldersSequentially(accessToken, targets, 0, new int[]{0, 0}, new int[]{0});
             }
 
             @Override
